@@ -62,6 +62,21 @@ ADELE (Advanced Development Environment for Limitless Engineering) is a comprehe
 - **Pro** ($29/mo) - Unlimited projects, priority support
 - **Enterprise** ($99/mo) - Custom integrations, dedicated support
 
+### Email Service (Resend)
+- Welcome emails for new users
+- Email verification with secure tokens
+- Password reset emails
+- Subscription notifications
+- Custom branded email templates
+
+### Monitoring & Logging
+- Real-time health checks (database, KV, R2)
+- Performance metrics with percentiles (p50, p95, p99)
+- Structured logging with severity levels
+- Error tracking and reporting
+- Admin monitoring dashboard
+- Data export (JSON/CSV format)
+
 ### Template Library
 32+ pre-built templates across categories:
 - E-Commerce, SaaS, CRM, CMS

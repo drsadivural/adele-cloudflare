@@ -173,6 +173,13 @@ export default function Admin() {
               {tab.label}
             </button>
           ))}
+          <Link
+            href="/admin/monitoring"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition whitespace-nowrap bg-muted hover:bg-muted/80"
+          >
+            <Activity className="h-4 w-4" />
+            Monitoring
+          </Link>
         </div>
 
         {/* Overview Tab */}

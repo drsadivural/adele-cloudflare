@@ -13,6 +13,7 @@ import Templates from "@/pages/Templates";
 import Pricing from "@/pages/Pricing";
 import Settings from "@/pages/Settings";
 import Admin from "@/pages/Admin";
+import Monitoring from "@/pages/Monitoring";
 import NotFound from "@/pages/NotFound";
 
 function Router() {
@@ -28,6 +29,7 @@ function Router() {
       <Route path="/pricing" component={Pricing} />
       <Route path="/settings" component={Settings} />
       <Route path="/admin" component={Admin} />
+      <Route path="/admin/monitoring" component={Monitoring} />
       <Route component={NotFound} />
     </Switch>
   );

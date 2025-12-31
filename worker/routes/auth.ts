@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { sign } from "hono/jwt";
-import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import * as schema from "../../drizzle/schema";
 import type { Env, Variables } from "../index";
@@ -31,12 +30,14 @@ function generateToken(): string {
 // Register new user
 authRoutes.post("/register", async (c) => {
   const db = c.get("db");
+  const email = c.get("email");
+  const logger = c.get("logger");
   const body = await c.req.json();
   
-  const { email, password, name } = body;
+  const { email: userEmail, password, name } = body;
   
   // Validation
-  if (!email || !password || !name) {
+  if (!userEmail || !password || !name) {
     return c.json({ error: "Email, password, and name are required" }, 400);
   }
   
@@ -45,12 +46,12 @@ authRoutes.post("/register", async (c) => {
   }
   
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
+  if (!emailRegex.test(userEmail)) {
     return c.json({ error: "Invalid email format" }, 400);
   }
   
   // Check if user exists
-  const existingUser = await db.select().from(schema.users).where(eq(schema.users.email, email.toLowerCase())).get();
+  const existingUser = await db.select().from(schema.users).where(eq(schema.users.email, userEmail.toLowerCase())).get();
   
   if (existingUser) {
     return c.json({ error: "Email already registered" }, 400);
@@ -62,7 +63,7 @@ authRoutes.post("/register", async (c) => {
   
   // Create user
   const result = await db.insert(schema.users).values({
-    email: email.toLowerCase(),
+    email: userEmail.toLowerCase(),
     passwordHash,
     name,
     verificationToken,
@@ -71,6 +72,8 @@ authRoutes.post("/register", async (c) => {
   }).returning();
   
   const user = result[0];
+  
+  logger.info("User registered", { userId: user.id, email: user.email });
   
   // Create default settings
   await db.insert(schema.userSettings).values({
@@ -103,7 +106,27 @@ authRoutes.post("/register", async (c) => {
     c.env.JWT_SECRET
   );
   
-  // TODO: Send verification email
+  // Send welcome email
+  if (email) {
+    const loginUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/dashboard`;
+    const emailResult = await email.sendWelcome(user.email, user.name, loginUrl);
+    
+    if (emailResult.success) {
+      logger.info("Welcome email sent", { userId: user.id, messageId: emailResult.messageId });
+    } else {
+      logger.warn("Failed to send welcome email", { userId: user.id, error: emailResult.error });
+    }
+    
+    // Send verification email
+    const verifyUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/verify-email?token=${verificationToken}`;
+    const verifyResult = await email.sendEmailVerification(user.email, user.name, verifyUrl);
+    
+    if (verifyResult.success) {
+      logger.info("Verification email sent", { userId: user.id, messageId: verifyResult.messageId });
+    } else {
+      logger.warn("Failed to send verification email", { userId: user.id, error: verifyResult.error });
+    }
+  }
   
   return c.json({
     success: true,
@@ -121,6 +144,8 @@ authRoutes.post("/register", async (c) => {
 // Login
 authRoutes.post("/login", async (c) => {
   const db = c.get("db");
+  const logger = c.get("logger");
+  const metrics = c.get("metrics");
   const body = await c.req.json();
   
   const { email, password } = body;
@@ -133,6 +158,8 @@ authRoutes.post("/login", async (c) => {
   const user = await db.select().from(schema.users).where(eq(schema.users.email, email.toLowerCase())).get();
   
   if (!user) {
+    metrics.increment("auth.login.failed");
+    logger.warn("Login failed - user not found", { email });
     return c.json({ error: "Invalid email or password" }, 401);
   }
   
@@ -140,6 +167,8 @@ authRoutes.post("/login", async (c) => {
   const isValid = await verifyPassword(password, user.passwordHash);
   
   if (!isValid) {
+    metrics.increment("auth.login.failed");
+    logger.warn("Login failed - invalid password", { userId: user.id });
     return c.json({ error: "Invalid email or password" }, 401);
   }
   
@@ -158,6 +187,9 @@ authRoutes.post("/login", async (c) => {
     }, 
     c.env.JWT_SECRET
   );
+  
+  metrics.increment("auth.login.success");
+  logger.info("User logged in", { userId: user.id });
   
   return c.json({
     success: true,
@@ -220,18 +252,21 @@ authRoutes.get("/me", async (c) => {
 // Forgot password
 authRoutes.post("/forgot-password", async (c) => {
   const db = c.get("db");
+  const email = c.get("email");
+  const logger = c.get("logger");
   const body = await c.req.json();
   
-  const { email } = body;
+  const { email: userEmail } = body;
   
-  if (!email) {
+  if (!userEmail) {
     return c.json({ error: "Email is required" }, 400);
   }
   
-  const user = await db.select().from(schema.users).where(eq(schema.users.email, email.toLowerCase())).get();
+  const user = await db.select().from(schema.users).where(eq(schema.users.email, userEmail.toLowerCase())).get();
   
   // Always return success to prevent email enumeration
   if (!user) {
+    logger.info("Password reset requested for non-existent email", { email: userEmail });
     return c.json({ success: true, message: "If the email exists, a reset link has been sent" });
   }
   
@@ -245,7 +280,17 @@ authRoutes.post("/forgot-password", async (c) => {
     })
     .where(eq(schema.users.id, user.id));
   
-  // TODO: Send reset email with link: ${APP_URL}/reset-password?token=${resetToken}
+  // Send reset email
+  if (email) {
+    const resetUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/reset-password?token=${resetToken}`;
+    const emailResult = await email.sendPasswordReset(user.email, user.name, resetUrl, "1 hour");
+    
+    if (emailResult.success) {
+      logger.info("Password reset email sent", { userId: user.id, messageId: emailResult.messageId });
+    } else {
+      logger.warn("Failed to send password reset email", { userId: user.id, error: emailResult.error });
+    }
+  }
   
   return c.json({ success: true, message: "If the email exists, a reset link has been sent" });
 });
@@ -253,6 +298,7 @@ authRoutes.post("/forgot-password", async (c) => {
 // Reset password
 authRoutes.post("/reset-password", async (c) => {
   const db = c.get("db");
+  const logger = c.get("logger");
   const body = await c.req.json();
   
   const { token, password } = body;
@@ -268,6 +314,7 @@ authRoutes.post("/reset-password", async (c) => {
   const user = await db.select().from(schema.users).where(eq(schema.users.resetToken, token)).get();
   
   if (!user || !user.resetTokenExpiry || user.resetTokenExpiry < Date.now()) {
+    logger.warn("Invalid or expired reset token used");
     return c.json({ error: "Invalid or expired reset token" }, 400);
   }
   
@@ -281,12 +328,15 @@ authRoutes.post("/reset-password", async (c) => {
     })
     .where(eq(schema.users.id, user.id));
   
+  logger.info("Password reset successfully", { userId: user.id });
+  
   return c.json({ success: true, message: "Password reset successfully" });
 });
 
 // Verify email
 authRoutes.post("/verify-email", async (c) => {
   const db = c.get("db");
+  const logger = c.get("logger");
   const body = await c.req.json();
   
   const { token } = body;
@@ -298,6 +348,7 @@ authRoutes.post("/verify-email", async (c) => {
   const user = await db.select().from(schema.users).where(eq(schema.users.verificationToken, token)).get();
   
   if (!user) {
+    logger.warn("Invalid verification token used");
     return c.json({ error: "Invalid verification token" }, 400);
   }
   
@@ -308,18 +359,80 @@ authRoutes.post("/verify-email", async (c) => {
     })
     .where(eq(schema.users.id, user.id));
   
+  logger.info("Email verified successfully", { userId: user.id });
+  
   return c.json({ success: true, message: "Email verified successfully" });
+});
+
+// Resend verification email
+authRoutes.post("/resend-verification", async (c) => {
+  const db = c.get("db");
+  const email = c.get("email");
+  const logger = c.get("logger");
+  
+  const authHeader = c.req.header("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  
+  const token = authHeader.substring(7);
+  
+  try {
+    const { verify } = await import("hono/jwt");
+    const payload = await verify(token, c.env.JWT_SECRET);
+    
+    const user = await db.select().from(schema.users).where(eq(schema.users.id, payload.userId as number)).get();
+    
+    if (!user) {
+      return c.json({ error: "User not found" }, 404);
+    }
+    
+    if (user.emailVerified) {
+      return c.json({ error: "Email already verified" }, 400);
+    }
+    
+    // Generate new verification token
+    const verificationToken = generateToken();
+    
+    await db.update(schema.users)
+      .set({ verificationToken })
+      .where(eq(schema.users.id, user.id));
+    
+    // Send verification email
+    if (email) {
+      const verifyUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/verify-email?token=${verificationToken}`;
+      const emailResult = await email.sendEmailVerification(user.email, user.name, verifyUrl);
+      
+      if (emailResult.success) {
+        logger.info("Verification email resent", { userId: user.id, messageId: emailResult.messageId });
+      } else {
+        logger.warn("Failed to resend verification email", { userId: user.id, error: emailResult.error });
+        return c.json({ error: "Failed to send email" }, 500);
+      }
+    }
+    
+    return c.json({ success: true, message: "Verification email sent" });
+  } catch (error) {
+    return c.json({ error: "Invalid token" }, 401);
+  }
 });
 
 // Logout (client-side token removal, but we can track it)
 authRoutes.post("/logout", async (c) => {
+  const logger = c.get("logger");
+  const metrics = c.get("metrics");
+  
   // In a stateless JWT system, logout is handled client-side
-  // But we can invalidate sessions if using KV storage
+  // But we can track the logout event
+  metrics.increment("auth.logout");
+  logger.info("User logged out");
+  
   return c.json({ success: true });
 });
 
 // Change password (authenticated)
 authRoutes.post("/change-password", async (c) => {
+  const logger = c.get("logger");
   const authHeader = c.req.header("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return c.json({ error: "Unauthorized" }, 401);
@@ -353,6 +466,7 @@ authRoutes.post("/change-password", async (c) => {
     const isValid = await verifyPassword(currentPassword, user.passwordHash);
     
     if (!isValid) {
+      logger.warn("Password change failed - invalid current password", { userId: user.id });
       return c.json({ error: "Current password is incorrect" }, 400);
     }
     
@@ -361,6 +475,8 @@ authRoutes.post("/change-password", async (c) => {
     await db.update(schema.users)
       .set({ passwordHash })
       .where(eq(schema.users.id, user.id));
+    
+    logger.info("Password changed successfully", { userId: user.id });
     
     return c.json({ success: true, message: "Password changed successfully" });
   } catch (error) {
