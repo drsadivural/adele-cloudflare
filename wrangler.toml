@@ -1,0 +1,45 @@
+name = "adele-api"
+main = "worker/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "adele-db"
+database_id = "YOUR_D1_DATABASE_ID"
+
+# R2 Storage binding (for file uploads)
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "adele-storage"
+
+# KV Namespace for sessions
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "YOUR_KV_NAMESPACE_ID"
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
+APP_URL = "https://adele.ayonix.com"
+
+# Secrets (set via wrangler secret put)
+# JWT_SECRET
+# OPENAI_API_KEY
+# STRIPE_SECRET_KEY
+# STRIPE_WEBHOOK_SECRET
+
+# Development settings
+[dev]
+port = 8787
+local_protocol = "http"
+
+# Routes for custom domain
+# routes = [
+#   { pattern = "api.adele.ayonix.com/*", zone_name = "ayonix.com" }
+# ]
+
+# Pages configuration (for frontend)
+[site]
+bucket = "./dist"
