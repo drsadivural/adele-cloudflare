@@ -180,6 +180,13 @@ export default function Admin() {
             <Activity className="h-4 w-4" />
             Monitoring
           </Link>
+          <Link
+            href="/admin/api-config"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition whitespace-nowrap bg-muted hover:bg-muted/80"
+          >
+            <Settings className="h-4 w-4" />
+            API Config
+          </Link>
         </div>
 
         {/* Overview Tab */}

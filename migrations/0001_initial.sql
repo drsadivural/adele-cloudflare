@@ -167,10 +167,12 @@ CREATE TABLE IF NOT EXISTS onboarding_progress (
 CREATE TABLE IF NOT EXISTS admin_config (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   key TEXT NOT NULL UNIQUE,
-  value TEXT NOT NULL,
+  value TEXT,
   is_encrypted INTEGER DEFAULT 0,
+  updated_by INTEGER,
   created_at INTEGER DEFAULT (unixepoch()),
-  updated_at INTEGER DEFAULT (unixepoch())
+  updated_at INTEGER DEFAULT (unixepoch()),
+  FOREIGN KEY (updated_by) REFERENCES users(id)
 );
 
 -- Analytics events table

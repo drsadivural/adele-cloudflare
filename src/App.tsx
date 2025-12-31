@@ -14,6 +14,7 @@ import Pricing from "@/pages/Pricing";
 import Settings from "@/pages/Settings";
 import Admin from "@/pages/Admin";
 import Monitoring from "@/pages/Monitoring";
+import ApiConfig from "@/pages/ApiConfig";
 import NotFound from "@/pages/NotFound";
 
 function Router() {
@@ -30,6 +31,7 @@ function Router() {
       <Route path="/settings" component={Settings} />
       <Route path="/admin" component={Admin} />
       <Route path="/admin/monitoring" component={Monitoring} />
+      <Route path="/admin/api-config" component={ApiConfig} />
       <Route component={NotFound} />
     </Switch>
   );

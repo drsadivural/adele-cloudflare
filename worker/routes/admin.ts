@@ -301,3 +301,225 @@ adminRoutes.delete("/templates/:id", async (c) => {
   
   return c.json({ success: true });
 });
+
+// Get API configurations
+adminRoutes.get("/api-configs", async (c) => {
+  const db = c.get("db");
+  
+  try {
+    const configs = await db.select()
+      .from(schema.adminConfig);
+    
+    // Convert to object format and mask secrets
+    const configMap: Record<string, Record<string, string>> = {};
+    for (const config of configs) {
+      const [apiId, ...keyParts] = config.key.split("_");
+      const fieldKey = keyParts.join("_");
+      
+      if (!configMap[apiId]) {
+        configMap[apiId] = {};
+      }
+      // Mask secret values
+      const value = config.isEncrypted && config.value 
+        ? config.value.substring(0, 4) + "..." + config.value.substring(config.value.length - 4)
+        : config.value || "";
+      configMap[apiId][config.key] = value;
+    }
+    
+    return c.json(configMap);
+  } catch (error) {
+    console.error("Failed to get API configs:", error);
+    return c.json({ error: "Failed to get configs" }, 500);
+  }
+});
+
+// Save API configuration
+adminRoutes.post("/api-configs", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user")!;
+  const { apiId, config } = await c.req.json();
+  
+  if (!apiId || !config) {
+    return c.json({ error: "Missing apiId or config" }, 400);
+  }
+  
+  try {
+    // Determine which fields are secrets
+    const secretFields = [
+      "API_KEY", "SECRET", "TOKEN", "PASSWORD", "PRIVATE_KEY", "CLIENT_SECRET",
+      "AUTH_TOKEN", "WEBHOOK_SECRET", "DSN"
+    ];
+    
+    for (const [key, value] of Object.entries(config)) {
+      if (typeof value !== "string") continue;
+      
+      const isSecret = secretFields.some(sf => key.toUpperCase().includes(sf));
+      const fullKey = `${apiId}_${key}`;
+      
+      // Check if config exists
+      const existing = await db.select()
+        .from(schema.adminConfig)
+        .where(eq(schema.adminConfig.key, fullKey))
+        .get();
+      
+      if (existing) {
+        // Only update if value changed (not masked)
+        if (!value.includes("...")) {
+          await db.update(schema.adminConfig)
+            .set({ 
+              value, 
+              isEncrypted: isSecret,
+              updatedAt: new Date(),
+              updatedBy: user.id 
+            })
+            .where(eq(schema.adminConfig.id, existing.id));
+        }
+      } else {
+        await db.insert(schema.adminConfig).values({
+          key: fullKey,
+          value,
+          isEncrypted: isSecret,
+          updatedBy: user.id,
+        });
+      }
+    }
+    
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Failed to save API config:", error);
+    return c.json({ error: "Failed to save config" }, 500);
+  }
+});
+
+// Test API connection
+adminRoutes.post("/test-api/:provider", async (c) => {
+  const provider = c.req.param("provider");
+  const { config } = await c.req.json();
+  
+  try {
+    switch (provider) {
+      case "resend": {
+        const apiKey = config?.RESEND_API_KEY;
+        if (!apiKey || apiKey.includes("...")) {
+          return c.json({ success: false, message: "API key is required" }, 400);
+        }
+        
+        const response = await fetch("https://api.resend.com/domains", {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        
+        if (response.ok) {
+          return c.json({ success: true, message: "Resend API connection successful!" });
+        } else {
+          const error = await response.json();
+          return c.json({ success: false, message: `Resend API error: ${(error as any).message || "Unknown error"}` });
+        }
+      }
+      
+      case "openai": {
+        const apiKey = config?.OPENAI_API_KEY;
+        if (!apiKey || apiKey.includes("...")) {
+          return c.json({ success: false, message: "API key is required" }, 400);
+        }
+        
+        const response = await fetch("https://api.openai.com/v1/models", {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        
+        if (response.ok) {
+          return c.json({ success: true, message: "OpenAI API connection successful!" });
+        } else {
+          const error = await response.json();
+          return c.json({ success: false, message: `OpenAI API error: ${(error as any).error?.message || "Unknown error"}` });
+        }
+      }
+      
+      case "anthropic": {
+        const apiKey = config?.ANTHROPIC_API_KEY;
+        if (!apiKey || apiKey.includes("...")) {
+          return c.json({ success: false, message: "API key is required" }, 400);
+        }
+        
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "claude-3-haiku-20240307",
+            max_tokens: 10,
+            messages: [{ role: "user", content: "Hi" }],
+          }),
+        });
+        
+        if (response.ok) {
+          return c.json({ success: true, message: "Anthropic API connection successful!" });
+        } else {
+          const error = await response.json();
+          return c.json({ success: false, message: `Anthropic API error: ${(error as any).error?.message || "Unknown error"}` });
+        }
+      }
+      
+      case "stripe": {
+        const secretKey = config?.STRIPE_SECRET_KEY;
+        if (!secretKey || secretKey.includes("...")) {
+          return c.json({ success: false, message: "Secret key is required" }, 400);
+        }
+        
+        const response = await fetch("https://api.stripe.com/v1/balance", {
+          headers: { Authorization: `Bearer ${secretKey}` },
+        });
+        
+        if (response.ok) {
+          return c.json({ success: true, message: "Stripe API connection successful!" });
+        } else {
+          const error = await response.json();
+          return c.json({ success: false, message: `Stripe API error: ${(error as any).error?.message || "Unknown error"}` });
+        }
+      }
+      
+      case "elevenlabs": {
+        const apiKey = config?.ELEVENLABS_API_KEY;
+        if (!apiKey || apiKey.includes("...")) {
+          return c.json({ success: false, message: "API key is required" }, 400);
+        }
+        
+        const response = await fetch("https://api.elevenlabs.io/v1/user", {
+          headers: { "xi-api-key": apiKey },
+        });
+        
+        if (response.ok) {
+          return c.json({ success: true, message: "ElevenLabs API connection successful!" });
+        } else {
+          return c.json({ success: false, message: "ElevenLabs API connection failed" });
+        }
+      }
+      
+      case "database": {
+        const dbUrl = config?.DATABASE_URL;
+        if (!dbUrl || dbUrl.includes("...")) {
+          return c.json({ success: false, message: "Database URL is required" }, 400);
+        }
+        
+        // For security, we just validate the URL format
+        try {
+          new URL(dbUrl.replace(/^(postgresql|mysql|mongodb):/, "http:"));
+          return c.json({ success: true, message: "Database URL format is valid. Connection test requires deployment." });
+        } catch {
+          return c.json({ success: false, message: "Invalid database URL format" });
+        }
+      }
+      
+      default:
+        return c.json({ success: false, message: `Unknown provider: ${provider}` }, 400);
+    }
+  } catch (error) {
+    console.error(`Failed to test ${provider} API:`, error);
+    return c.json({ 
+      success: false, 
+      message: error instanceof Error ? error.message : "Connection test failed" 
+    }, 500);
+  }
+});

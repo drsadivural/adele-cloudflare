@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import * as schema from "../drizzle/schema";
 import { authRoutes } from "./routes/auth";
+import { oauthRoutes } from "./routes/oauth";
 import { projectRoutes } from "./routes/projects";
 import { chatRoutes } from "./routes/chat";
 import { templateRoutes } from "./routes/templates";
@@ -11,6 +12,7 @@ import { userRoutes } from "./routes/users";
 import { adminRoutes } from "./routes/admin";
 import { stripeRoutes } from "./routes/stripe";
 import { createEmailService, EmailService } from "./services/email";
+import { rateLimiters } from "./middleware/rateLimit";
 import { 
   initMonitoring, 
   Logger, 
@@ -36,6 +38,23 @@ export interface Env {
   FROM_NAME?: string;
   SENTRY_DSN?: string;
   VERSION?: string;
+  // OAuth providers
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  APPLE_CLIENT_ID?: string;
+  APPLE_CLIENT_SECRET?: string;
+  APPLE_TEAM_ID?: string;
+  APPLE_KEY_ID?: string;
+  MICROSOFT_CLIENT_ID?: string;
+  MICROSOFT_CLIENT_SECRET?: string;
+  MICROSOFT_TENANT_ID?: string;
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  FACEBOOK_CLIENT_ID?: string;
+  FACEBOOK_CLIENT_SECRET?: string;
+  TWILIO_ACCOUNT_SID?: string;
+  TWILIO_AUTH_TOKEN?: string;
+  TWILIO_PHONE_NUMBER?: string;
 }
 
 export type Variables = {
@@ -117,8 +136,20 @@ app.use("*", async (c, next) => {
   }
 });
 
+// Rate limiting for auth endpoints
+app.use("/api/auth/*", rateLimiters.auth);
+app.use("/api/oauth/*", rateLimiters.auth);
+
+// Rate limiting for expensive operations (AI, chat)
+app.use("/api/chat/*", rateLimiters.expensive);
+app.use("/api/projects/*/generate", rateLimiters.expensive);
+
+// General API rate limiting
+app.use("/api/*", rateLimiters.api);
+
 // Public routes (no auth required)
 app.route("/api/auth", authRoutes);
+app.route("/api/oauth", oauthRoutes);
 app.route("/api/templates", templateRoutes);
 
 // Stripe webhook (no auth, but verified by signature)
@@ -275,6 +306,7 @@ app.use("/api/*", async (c, next) => {
   const path = c.req.path;
   if (
     path.startsWith("/api/auth") || 
+    path.startsWith("/api/oauth") ||
     path.startsWith("/api/templates") ||
     path.startsWith("/api/stripe/webhook") ||
     path === "/api/health" ||

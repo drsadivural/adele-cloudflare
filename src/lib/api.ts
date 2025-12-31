@@ -328,6 +328,22 @@ export const admin = {
 
   deleteTemplate: (id: number) =>
     request<{ success: boolean }>(`/admin/templates/${id}`, { method: "DELETE" }),
+
+  // API Configuration
+  getApiConfigs: () =>
+    request<Record<string, Record<string, string>>>("/admin/api-configs"),
+
+  saveApiConfig: (apiId: string, config: Record<string, string>) =>
+    request<{ success: boolean }>("/admin/api-configs", {
+      method: "POST",
+      body: JSON.stringify({ apiId, config }),
+    }),
+
+  testApiConnection: (provider: string, config: Record<string, string>) =>
+    request<{ success: boolean; message: string }>(`/admin/test-api/${provider}`, {
+      method: "POST",
+      body: JSON.stringify({ config }),
+    }),
 };
 
 // Types
