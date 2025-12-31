@@ -1,34 +1,77 @@
-import { useState, useEffect } from "react";
-import { Link, useLocation } from "wouter";
-import { useAuth } from "@/contexts/AuthContext";
-import { projects, Project } from "@/lib/api";
-import { toast } from "sonner";
+import { useState, useEffect, useRef } from 'react';
+import { Link, useLocation } from 'wouter';
+import { useAuth } from '@/contexts/AuthContext';
+import { projects, Project } from '@/lib/api';
+import { toast } from 'sonner';
+import SettingsPanel from '@/components/SettingsPanel';
+import ConnectorsModal from '@/components/ConnectorsModal';
 import {
   Plus,
-  FolderOpen,
-  Clock,
-  ArrowRight,
-  Sparkles,
+  Search,
   Settings,
-  LogOut,
-  LayoutGrid,
-  FileCode,
-  BarChart3,
-  User,
-  ChevronDown,
+  Mic,
+  Send,
+  MessageSquare,
+  Globe,
+  Smartphone,
+  Palette,
+  MoreHorizontal,
+  Presentation,
+  Link2,
+  X,
   Loader2,
-} from "lucide-react";
+  Trash2,
+} from 'lucide-react';
+
+interface ChatHistory {
+  id: number;
+  title: string;
+  lastMessage: string;
+  timestamp: Date;
+  projectId?: number;
+}
+
+interface Connector {
+  id: string;
+  name: string;
+  icon: string;
+  connected: boolean;
+}
+
+const connectedTools: Connector[] = [
+  { id: 'browser', name: 'Browser', icon: '🌐', connected: true },
+  { id: 'github', name: 'GitHub', icon: '🐙', connected: true },
+];
+
+const availableConnectors = [
+  { icon: '📧', name: 'Gmail' },
+  { icon: '📅', name: 'Calendar' },
+  { icon: '📁', name: 'Drive' },
+  { icon: '📨', name: 'Outlook' },
+  { icon: '🐙', name: 'GitHub' },
+  { icon: '💬', name: 'Slack' },
+  { icon: '📝', name: 'Notion' },
+  { icon: '⚡', name: 'Zapier' },
+];
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
-  const { user, subscription, logout, loading: authLoading } = useAuth();
-  const [projectList, setProjectList] = useState<Project[]>([]);
+  const { user, logout, loading: authLoading } = useAuth();
+  const [message, setMessage] = useState('');
+  const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+  const [showConnectors, setShowConnectors] = useState(false);
+  const [activeSettingsTab, setActiveSettingsTab] = useState('settings');
+  const [isRecording, setIsRecording] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showToolsPrompt, setShowToolsPrompt] = useState(true);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
-      setLocation("/login");
+      setLocation('/login');
     }
   }, [user, authLoading, setLocation]);
 
@@ -36,9 +79,16 @@ export default function Dashboard() {
     async function fetchProjects() {
       try {
         const response = await projects.list();
-        setProjectList(response.projects);
+        const history: ChatHistory[] = response.projects.map((p: Project) => ({
+          id: p.id,
+          title: p.name || 'Untitled Project',
+          lastMessage: p.description || 'No description',
+          timestamp: new Date(p.updatedAt || p.createdAt),
+          projectId: p.id,
+        }));
+        setChatHistory(history);
       } catch (error) {
-        console.error("Failed to fetch projects:", error);
+        console.error('Failed to fetch projects:', error);
       } finally {
         setLoading(false);
       }
@@ -49,16 +99,65 @@ export default function Dashboard() {
     }
   }, [user]);
 
+  const handleSendMessage = async () => {
+    if (!message.trim() || isSending) return;
+
+    setIsSending(true);
+    try {
+      const project = await projects.create({
+        name: message.slice(0, 50),
+        description: message,
+        type: 'custom',
+      });
+      setLocation(`/projects/${project.project.id}`);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to start conversation');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  const handleQuickAction = (action: string) => {
+    const prompts: Record<string, string> = {
+      slides: 'Create a professional presentation about ',
+      website: 'Build a modern website for ',
+      apps: 'Develop a mobile/web application for ',
+      design: 'Design a UI/UX for ',
+    };
+    setMessage(prompts[action] || '');
+    inputRef.current?.focus();
+  };
+
+  const toggleVoiceRecording = () => {
+    setIsRecording(!isRecording);
+    if (!isRecording) {
+      toast.info('Voice recording started...');
+    } else {
+      toast.info('Voice recording stopped');
+    }
+  };
+
   const handleLogout = async () => {
     await logout();
-    toast.success("Logged out successfully");
-    setLocation("/");
+    toast.success('Logged out successfully');
+    setLocation('/');
   };
+
+  const filteredHistory = chatHistory.filter((chat) =>
+    chat.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex items-center justify-center bg-zinc-950">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
       </div>
     );
   }
@@ -67,254 +166,267 @@ export default function Dashboard() {
     return null;
   }
 
-  const recentProjects = projectList.slice(0, 4);
-  const stats = {
-    totalProjects: projectList.length,
-    activeProjects: projectList.filter((p) => p.status === "in_progress").length,
-    completedProjects: projectList.filter((p) => p.status === "completed").length,
-  };
-
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b bg-card">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3">
-            <img src="/logo.png" alt="ADELE" className="h-10 w-10" />
-            <span className="text-xl font-semibold">ADELE</span>
-          </Link>
+    <div className="h-screen flex bg-zinc-950 text-white overflow-hidden">
+      {/* Left Sidebar */}
+      <div className="w-64 flex flex-col border-r border-zinc-800 bg-zinc-950">
+        {/* Logo */}
+        <div className="p-4 flex items-center gap-3">
+          <img src="/adele-logo.png" alt="ADELE" className="w-8 h-8" />
+          <span className="text-lg font-semibold">adele</span>
+        </div>
 
-          <nav className="hidden md:flex items-center gap-6">
-            <Link
-              href="/dashboard"
-              className="flex items-center gap-2 text-foreground font-medium"
-            >
-              <LayoutGrid className="h-4 w-4" />
-              Dashboard
-            </Link>
-            <Link
-              href="/projects"
-              className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition"
-            >
-              <FolderOpen className="h-4 w-4" />
-              Projects
-            </Link>
-            <Link
-              href="/templates"
-              className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition"
-            >
-              <FileCode className="h-4 w-4" />
-              Templates
-            </Link>
-            {user.role === "admin" && (
-              <Link
-                href="/admin"
-                className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition"
-              >
-                <BarChart3 className="h-4 w-4" />
-                Admin
-              </Link>
-            )}
-          </nav>
+        {/* New Chat Button */}
+        <div className="px-3 mb-2">
+          <button
+            onClick={() => {
+              setMessage('');
+              inputRef.current?.focus();
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors text-sm font-medium"
+          >
+            <Plus className="w-4 h-4" />
+            New chat
+          </button>
+        </div>
 
+        {/* Search */}
+        <div className="px-3 mb-3">
           <div className="relative">
-            <button
-              onClick={() => setShowUserMenu(!showUserMenu)}
-              className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-muted transition"
-            >
-              <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
-                <User className="h-4 w-4 text-primary" />
-              </div>
-              <span className="hidden md:block font-medium">{user.name}</span>
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            </button>
-
-            {showUserMenu && (
-              <div className="absolute right-0 top-full mt-2 w-56 bg-card rounded-xl border shadow-lg py-2 z-50">
-                <div className="px-4 py-2 border-b">
-                  <p className="font-medium">{user.name}</p>
-                  <p className="text-sm text-muted-foreground">{user.email}</p>
-                  <p className="text-xs text-primary mt-1 capitalize">
-                    {subscription?.plan || "Free"} Plan
-                  </p>
-                </div>
-                <Link
-                  href="/settings"
-                  className="flex items-center gap-3 px-4 py-2 hover:bg-muted transition"
-                >
-                  <Settings className="h-4 w-4" />
-                  Settings
-                </Link>
-                <button
-                  onClick={handleLogout}
-                  className="w-full flex items-center gap-3 px-4 py-2 hover:bg-muted transition text-destructive"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sign Out
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="container mx-auto px-6 py-8">
-        {/* Welcome Section */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Welcome back, {user.name?.split(" ")[0]}!</h1>
-          <p className="text-muted-foreground">
-            Continue building or start a new project with AI assistance.
-          </p>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="grid md:grid-cols-3 gap-6 mb-8">
-          <Link
-            href="/projects/new"
-            className="bg-gradient-to-br from-primary to-purple-600 text-white rounded-2xl p-6 card-hover"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-                <Plus className="h-6 w-6" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-lg">New Project</h3>
-                <p className="text-white/80 text-sm">Start from scratch</p>
-              </div>
-            </div>
-          </Link>
-
-          <Link
-            href="/templates"
-            className="bg-card border rounded-2xl p-6 card-hover"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center">
-                <Sparkles className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-lg">Use Template</h3>
-                <p className="text-muted-foreground text-sm">30+ templates</p>
-              </div>
-            </div>
-          </Link>
-
-          <Link
-            href="/projects"
-            className="bg-card border rounded-2xl p-6 card-hover"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center">
-                <FolderOpen className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-lg">All Projects</h3>
-                <p className="text-muted-foreground text-sm">{stats.totalProjects} projects</p>
-              </div>
-            </div>
-          </Link>
-        </div>
-
-        {/* Stats */}
-        <div className="grid md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-card border rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-muted-foreground">Total Projects</span>
-              <FolderOpen className="h-5 w-5 text-muted-foreground" />
-            </div>
-            <p className="text-3xl font-bold">{stats.totalProjects}</p>
-          </div>
-
-          <div className="bg-card border rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-muted-foreground">In Progress</span>
-              <Clock className="h-5 w-5 text-muted-foreground" />
-            </div>
-            <p className="text-3xl font-bold">{stats.activeProjects}</p>
-          </div>
-
-          <div className="bg-card border rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-muted-foreground">Completed</span>
-              <Sparkles className="h-5 w-5 text-muted-foreground" />
-            </div>
-            <p className="text-3xl font-bold">{stats.completedProjects}</p>
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+            <input
+              type="text"
+              placeholder="Search chats..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-sm focus:outline-none focus:border-zinc-700 placeholder-zinc-500"
+            />
           </div>
         </div>
 
-        {/* Recent Projects */}
-        <div className="bg-card border rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold">Recent Projects</h2>
-            <Link
-              href="/projects"
-              className="text-primary text-sm font-medium hover:underline flex items-center gap-1"
-            >
-              View All
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-
+        {/* Chat History */}
+        <div className="flex-1 overflow-y-auto px-2">
+          <div className="text-xs text-zinc-500 px-2 py-2 font-medium">Recent</div>
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
             </div>
-          ) : recentProjects.length > 0 ? (
-            <div className="space-y-4">
-              {recentProjects.map((project) => (
+          ) : filteredHistory.length === 0 ? (
+            <div className="text-center text-zinc-500 text-sm py-8 px-4">
+              <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p>No conversations yet</p>
+              <p className="text-xs mt-1">Start a new chat to begin</p>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {filteredHistory.map((chat) => (
                 <Link
-                  key={project.id}
-                  href={`/projects/${project.id}`}
-                  className="flex items-center justify-between p-4 rounded-xl hover:bg-muted transition"
+                  key={chat.id}
+                  href={`/projects/${chat.projectId}`}
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-zinc-800/50 transition-colors group"
                 >
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
-                      <FileCode className="h-5 w-5 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="font-medium">{project.name}</h3>
-                      <p className="text-sm text-muted-foreground">
-                        {project.type} • Updated{" "}
-                        {new Date(project.updatedAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${
-                        project.status === "completed"
-                          ? "bg-green-100 text-green-700"
-                          : project.status === "in_progress"
-                          ? "bg-blue-100 text-blue-700"
-                          : "bg-gray-100 text-gray-700"
-                      }`}
-                    >
-                      {project.status.replace("_", " ")}
-                    </span>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                  </div>
+                  <MessageSquare className="w-4 h-4 text-zinc-500 flex-shrink-0" />
+                  <span className="text-sm truncate flex-1">{chat.title}</span>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      // Delete functionality
+                    }}
+                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-700 rounded transition-all"
+                  >
+                    <Trash2 className="w-3 h-3 text-zinc-400" />
+                  </button>
                 </Link>
               ))}
             </div>
-          ) : (
-            <div className="text-center py-12">
-              <FolderOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-medium mb-2">No projects yet</h3>
-              <p className="text-muted-foreground mb-4">
-                Create your first project to get started
-              </p>
-              <Link
-                href="/projects/new"
-                className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl font-medium"
-              >
-                <Plus className="h-4 w-4" />
-                New Project
-              </Link>
-            </div>
           )}
         </div>
-      </main>
+
+        {/* Bottom Settings */}
+        <div className="border-t border-zinc-800 p-3">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-zinc-800 transition-colors"
+          >
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-sm font-semibold">
+              {user?.name?.charAt(0) || user?.email?.charAt(0) || 'U'}
+            </div>
+            <div className="flex-1 text-left min-w-0">
+              <div className="text-sm font-medium truncate">{user?.name || 'User'}</div>
+              <div className="text-xs text-zinc-500 truncate">{user?.email}</div>
+            </div>
+            <Settings className="w-4 h-4 text-zinc-500" />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col">
+        {/* Main Chat Area */}
+        <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
+          {/* Greeting */}
+          <h1 className="text-4xl md:text-5xl font-light text-white mb-12 text-center tracking-tight">
+            What can I do for you?
+          </h1>
+
+          {/* Chat Input Box */}
+          <div className="w-full max-w-3xl">
+            <div className="bg-zinc-900 rounded-2xl border border-zinc-800 overflow-hidden shadow-xl">
+              {/* Input Area */}
+              <div className="p-4">
+                <textarea
+                  ref={inputRef}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Assign a task or ask anything"
+                  rows={3}
+                  className="w-full bg-transparent text-white placeholder-zinc-500 resize-none focus:outline-none text-lg leading-relaxed"
+                />
+              </div>
+
+              {/* Bottom Bar */}
+              <div className="px-4 pb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {/* Add Attachment */}
+                  <button className="p-2 rounded-lg hover:bg-zinc-800 transition-colors">
+                    <Plus className="w-5 h-5 text-zinc-400" />
+                  </button>
+
+                  {/* Connected Tools */}
+                  <div className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                    {connectedTools.map((tool) => (
+                      <span key={tool.id} className="text-base" title={tool.name}>
+                        {tool.icon}
+                      </span>
+                    ))}
+                    <span className="text-xs text-zinc-500 ml-1">+{connectedTools.length}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Voice Input */}
+                  <button
+                    onClick={toggleVoiceRecording}
+                    className={`p-2.5 rounded-lg transition-all ${
+                      isRecording
+                        ? 'bg-red-500 text-white animate-pulse'
+                        : 'hover:bg-zinc-800 text-zinc-400'
+                    }`}
+                  >
+                    <Mic className="w-5 h-5" />
+                  </button>
+
+                  {/* Send Button */}
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={!message.trim() || isSending}
+                    className={`p-2.5 rounded-full transition-all ${
+                      message.trim() && !isSending
+                        ? 'bg-white text-zinc-900 hover:bg-zinc-200'
+                        : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                    }`}
+                  >
+                    {isSending ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Send className="w-5 h-5" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Connect Tools Prompt */}
+            {showToolsPrompt && (
+              <button
+                onClick={() => setShowConnectors(true)}
+                className="mt-4 w-full flex items-center justify-between px-4 py-3 text-sm text-zinc-400 hover:text-zinc-300 transition-colors rounded-xl hover:bg-zinc-900/50 group"
+              >
+                <div className="flex items-center gap-2">
+                  <Link2 className="w-4 h-4" />
+                  <span>Connect your tools to ADELE</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {availableConnectors.map((c, i) => (
+                    <span key={i} className="text-base opacity-60 group-hover:opacity-100 transition-opacity">
+                      {c.icon}
+                    </span>
+                  ))}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowToolsPrompt(false);
+                    }}
+                    className="ml-2 p-1 hover:bg-zinc-800 rounded"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </button>
+            )}
+
+            {/* Quick Actions */}
+            <div className="mt-8 flex flex-wrap justify-center gap-3">
+              <button
+                onClick={() => handleQuickAction('slides')}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600 transition-all text-sm font-medium"
+              >
+                <Presentation className="w-4 h-4" />
+                Create slides
+              </button>
+              <button
+                onClick={() => handleQuickAction('website')}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600 transition-all text-sm font-medium"
+              >
+                <Globe className="w-4 h-4" />
+                Build website
+              </button>
+              <button
+                onClick={() => handleQuickAction('apps')}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600 transition-all text-sm font-medium"
+              >
+                <Smartphone className="w-4 h-4" />
+                Develop apps
+              </button>
+              <button
+                onClick={() => handleQuickAction('design')}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600 transition-all text-sm font-medium"
+              >
+                <Palette className="w-4 h-4" />
+                Design
+              </button>
+              <Link
+                href="/templates"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600 transition-all text-sm font-medium"
+              >
+                <MoreHorizontal className="w-4 h-4" />
+                More
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Settings Panel */}
+      <SettingsPanel
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        activeTab={activeSettingsTab}
+        onTabChange={setActiveSettingsTab}
+        user={user}
+        onLogout={handleLogout}
+      />
+
+      {/* Connectors Modal */}
+      <ConnectorsModal
+        isOpen={showConnectors}
+        onClose={() => setShowConnectors(false)}
+        onConnect={(id) => {
+          toast.success(`Connecting to ${id}...`);
+        }}
+      />
     </div>
   );
 }
