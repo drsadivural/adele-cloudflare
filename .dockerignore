@@ -1,0 +1,63 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+dist
+build
+.next
+.nuxt
+
+# Development files
+.git
+.gitignore
+*.md
+!README.md
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+coverage
+*.test.ts
+*.spec.ts
+__tests__
+
+# Docker files (not needed inside container)
+docker-compose*.yml
+Dockerfile*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Temporary files
+tmp
+temp
+.tmp
+.temp
+
+# Certificates (will be mounted)
+certbot
+nginx/conf.d/*.conf
+
+# Local development
+.wrangler
+wrangler.toml
