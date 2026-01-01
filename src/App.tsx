@@ -15,6 +15,7 @@ import Settings from "@/pages/Settings";
 import Admin from "@/pages/Admin";
 import Monitoring from "@/pages/Monitoring";
 import ApiConfig from "@/pages/ApiConfig";
+import OAuthCallback from "@/pages/OAuthCallback";
 import NotFound from "@/pages/NotFound";
 
 function Router() {
@@ -23,6 +24,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
+      <Route path="/oauth/callback" component={OAuthCallback} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/projects" component={Projects} />
       <Route path="/projects/:id" component={ProjectBuilder} />

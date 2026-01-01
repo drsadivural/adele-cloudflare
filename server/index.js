@@ -1,6 +1,6 @@
 /**
  * ADELE - Node.js Express Server for AWS EC2 Deployment
- * Converts Cloudflare Worker API to standard Node.js/Express
+ * With OAuth support for Google, Microsoft, Apple, and GitHub
  */
 
 require('dotenv').config();
@@ -13,9 +13,11 @@ const path = require('path');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const APP_URL = process.env.APP_URL || 'https://adele.ayonix.com';
 
 // Database connection
 const pool = new Pool({
@@ -25,11 +27,11 @@ const pool = new Pool({
 
 // Middleware
 app.use(helmet({
-  contentSecurityPolicy: false, // Disable for SPA
+  contentSecurityPolicy: false,
 }));
 app.use(compression());
 app.use(cors({
-  origin: process.env.APP_URL || '*',
+  origin: APP_URL,
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -63,24 +65,40 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
-// Optional authentication (doesn't fail if no token)
-const optionalAuth = async (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const result = await pool.query('SELECT * FROM users WHERE id = $1', [decoded.userId]);
-      if (result.rows.length > 0) {
-        req.user = result.rows[0];
-      }
-    } catch (error) {
-      // Token invalid, continue without user
-    }
+// Helper function to create or update OAuth user
+async function findOrCreateOAuthUser(email, name, provider, providerId, avatarUrl = null) {
+  // Check if user exists
+  let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+  
+  if (result.rows.length > 0) {
+    // Update last signed in
+    await pool.query('UPDATE users SET last_signed_in = NOW() WHERE id = $1', [result.rows[0].id]);
+    return result.rows[0];
   }
-  next();
-};
+
+  // Create new user
+  const randomPassword = crypto.randomBytes(32).toString('hex');
+  const passwordHash = await bcrypt.hash(randomPassword, 12);
+
+  result = await pool.query(
+    `INSERT INTO users (email, password_hash, name, role, email_verified, avatar_url, oauth_provider, oauth_provider_id) 
+     VALUES ($1, $2, $3, 'user', true, $4, $5, $6) 
+     RETURNING *`,
+    [email, passwordHash, name, avatarUrl, provider, providerId]
+  );
+
+  const user = result.rows[0];
+
+  // Create default settings
+  await pool.query('INSERT INTO user_settings (user_id) VALUES ($1)', [user.id]);
+
+  return user;
+}
+
+// Generate JWT token for user
+function generateToken(user) {
+  return jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+}
 
 // ==========================================
 // Health Check
@@ -99,7 +117,475 @@ app.get('/api/health', async (req, res) => {
 });
 
 // ==========================================
-// Authentication Routes
+// OAuth Routes - Google
+// ==========================================
+app.get('/api/auth/oauth/google', (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'Google OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/google/callback`;
+  const scope = encodeURIComponent('openid email profile');
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}&access_type=offline&prompt=consent`;
+  
+  res.redirect(authUrl);
+});
+
+app.get('/api/auth/oauth/google/callback', async (req, res) => {
+  try {
+    const { code, error } = req.query;
+    
+    if (error) {
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    // Exchange code for tokens
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: `${APP_URL}/api/auth/oauth/google/callback`,
+        grant_type: 'authorization_code'
+      })
+    });
+
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('Google token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Get user info
+    const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` }
+    });
+
+    const googleUser = await userResponse.json();
+    
+    if (!googleUser.email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      googleUser.email,
+      googleUser.name || googleUser.email.split('@')[0],
+      'google',
+      googleUser.id,
+      googleUser.picture
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Google OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// ==========================================
+// OAuth Routes - GitHub
+// ==========================================
+app.get('/api/auth/oauth/github', (req, res) => {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'GitHub OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/github/callback`;
+  const scope = 'user:email';
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${state}`;
+  
+  res.redirect(authUrl);
+});
+
+app.get('/api/auth/oauth/github/callback', async (req, res) => {
+  try {
+    const { code, error } = req.query;
+    
+    if (error) {
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    // Exchange code for token
+    const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code,
+        redirect_uri: `${APP_URL}/api/auth/oauth/github/callback`
+      })
+    });
+
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('GitHub token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Get user info
+    const userResponse = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${tokens.access_token}`,
+        'User-Agent': 'ADELE-App'
+      }
+    });
+
+    const githubUser = await userResponse.json();
+
+    // Get user email if not public
+    let email = githubUser.email;
+    if (!email) {
+      const emailResponse = await fetch('https://api.github.com/user/emails', {
+        headers: {
+          Authorization: `Bearer ${tokens.access_token}`,
+          'User-Agent': 'ADELE-App'
+        }
+      });
+      const emails = await emailResponse.json();
+      const primaryEmail = emails.find(e => e.primary) || emails[0];
+      email = primaryEmail?.email;
+    }
+
+    if (!email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      email,
+      githubUser.name || githubUser.login,
+      'github',
+      String(githubUser.id),
+      githubUser.avatar_url
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('GitHub OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// ==========================================
+// OAuth Routes - Microsoft
+// ==========================================
+app.get('/api/auth/oauth/microsoft', (req, res) => {
+  const clientId = process.env.MICROSOFT_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'Microsoft OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/microsoft/callback`;
+  const scope = encodeURIComponent('openid email profile User.Read');
+  const state = crypto.randomBytes(16).toString('hex');
+  const tenant = process.env.MICROSOFT_TENANT_ID || 'common';
+  
+  const authUrl = `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}&response_mode=query`;
+  
+  res.redirect(authUrl);
+});
+
+app.get('/api/auth/oauth/microsoft/callback', async (req, res) => {
+  try {
+    const { code, error, error_description } = req.query;
+    
+    if (error) {
+      console.error('Microsoft OAuth error:', error, error_description);
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    const tenant = process.env.MICROSOFT_TENANT_ID || 'common';
+
+    // Exchange code for tokens
+    const tokenResponse = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.MICROSOFT_CLIENT_ID,
+        client_secret: process.env.MICROSOFT_CLIENT_SECRET,
+        redirect_uri: `${APP_URL}/api/auth/oauth/microsoft/callback`,
+        grant_type: 'authorization_code',
+        scope: 'openid email profile User.Read'
+      })
+    });
+
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('Microsoft token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Get user info
+    const userResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` }
+    });
+
+    const msUser = await userResponse.json();
+    
+    const email = msUser.mail || msUser.userPrincipalName;
+    if (!email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      email,
+      msUser.displayName || email.split('@')[0],
+      'microsoft',
+      msUser.id,
+      null
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Microsoft OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// ==========================================
+// OAuth Routes - Apple
+// ==========================================
+app.get('/api/auth/oauth/apple', (req, res) => {
+  const clientId = process.env.APPLE_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'Apple OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/apple/callback`;
+  const scope = 'name email';
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  const authUrl = `https://appleid.apple.com/auth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&state=${state}&response_mode=form_post`;
+  
+  res.redirect(authUrl);
+});
+
+app.post('/api/auth/oauth/apple/callback', async (req, res) => {
+  try {
+    const { code, error, user: appleUserData } = req.body;
+    
+    if (error) {
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    // Generate client secret for Apple
+    const clientSecret = generateAppleClientSecret();
+
+    // Exchange code for tokens
+    const tokenResponse = await fetch('https://appleid.apple.com/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.APPLE_CLIENT_ID,
+        client_secret: clientSecret,
+        redirect_uri: `${APP_URL}/api/auth/oauth/apple/callback`,
+        grant_type: 'authorization_code'
+      })
+    });
+
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('Apple token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Decode ID token to get user info
+    const idTokenParts = tokens.id_token.split('.');
+    const payload = JSON.parse(Buffer.from(idTokenParts[1], 'base64').toString());
+    
+    const email = payload.email;
+    if (!email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Parse user data if provided (only on first login)
+    let name = email.split('@')[0];
+    if (appleUserData) {
+      try {
+        const userData = typeof appleUserData === 'string' ? JSON.parse(appleUserData) : appleUserData;
+        if (userData.name) {
+          name = `${userData.name.firstName || ''} ${userData.name.lastName || ''}`.trim() || name;
+        }
+      } catch (e) {
+        console.error('Error parsing Apple user data:', e);
+      }
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      email,
+      name,
+      'apple',
+      payload.sub,
+      null
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Apple OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// Generate Apple client secret (JWT)
+function generateAppleClientSecret() {
+  const privateKey = process.env.APPLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  const teamId = process.env.APPLE_TEAM_ID;
+  const clientId = process.env.APPLE_CLIENT_ID;
+  const keyId = process.env.APPLE_KEY_ID;
+
+  if (!privateKey || !teamId || !clientId || !keyId) {
+    throw new Error('Apple OAuth not fully configured');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = {
+    alg: 'ES256',
+    kid: keyId
+  };
+  const payload = {
+    iss: teamId,
+    iat: now,
+    exp: now + 86400 * 180, // 180 days
+    aud: 'https://appleid.apple.com',
+    sub: clientId
+  };
+
+  // Simple JWT signing (you may want to use a library for production)
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signatureInput = `${headerB64}.${payloadB64}`;
+  
+  const sign = crypto.createSign('SHA256');
+  sign.update(signatureInput);
+  const signature = sign.sign(privateKey, 'base64url');
+
+  return `${signatureInput}.${signature}`;
+}
+
+// ==========================================
+// OAuth Routes - Facebook
+// ==========================================
+app.get('/api/auth/oauth/facebook', (req, res) => {
+  const clientId = process.env.FACEBOOK_APP_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'Facebook OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/facebook/callback`;
+  const scope = 'email,public_profile';
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${state}`;
+  
+  res.redirect(authUrl);
+});
+
+app.get('/api/auth/oauth/facebook/callback', async (req, res) => {
+  try {
+    const { code, error } = req.query;
+    
+    if (error) {
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    // Exchange code for token
+    const tokenUrl = `https://graph.facebook.com/v18.0/oauth/access_token?client_id=${process.env.FACEBOOK_APP_ID}&client_secret=${process.env.FACEBOOK_APP_SECRET}&redirect_uri=${encodeURIComponent(`${APP_URL}/api/auth/oauth/facebook/callback`)}&code=${code}`;
+    
+    const tokenResponse = await fetch(tokenUrl);
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('Facebook token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Get user info
+    const userResponse = await fetch(`https://graph.facebook.com/me?fields=id,name,email,picture&access_token=${tokens.access_token}`);
+    const fbUser = await userResponse.json();
+    
+    if (!fbUser.email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      fbUser.email,
+      fbUser.name || fbUser.email.split('@')[0],
+      'facebook',
+      fbUser.id,
+      fbUser.picture?.data?.url
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Facebook OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// ==========================================
+// Standard Authentication Routes
 // ==========================================
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -109,16 +595,13 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Email, password, and name are required' });
     }
 
-    // Check if user exists
     const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Create user
     const result = await pool.query(
       `INSERT INTO users (email, password_hash, name, role) 
        VALUES ($1, $2, $3, 'user') 
@@ -128,23 +611,13 @@ app.post('/api/auth/register', async (req, res) => {
 
     const user = result.rows[0];
 
-    // Create default settings
-    await pool.query(
-      `INSERT INTO user_settings (user_id) VALUES ($1)`,
-      [user.id]
-    );
+    await pool.query('INSERT INTO user_settings (user_id) VALUES ($1)', [user.id]);
 
-    // Generate token
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = generateToken(user);
 
     res.json({
       success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role
-      },
+      user: { id: user.id, email: user.email, name: user.name, role: user.role },
       token
     });
   } catch (error) {
@@ -161,7 +634,6 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    // Find user
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -169,17 +641,14 @@ app.post('/api/auth/login', async (req, res) => {
 
     const user = result.rows[0];
 
-    // Verify password
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Update last signed in
     await pool.query('UPDATE users SET last_signed_in = NOW() WHERE id = $1', [user.id]);
 
-    // Generate token
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = generateToken(user);
 
     res.json({
       success: true,
@@ -200,7 +669,6 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
-    // Get subscription
     const subResult = await pool.query(
       'SELECT plan, status, current_period_end, cancel_at_period_end FROM subscriptions WHERE user_id = $1',
       [req.user.id]
@@ -231,15 +699,10 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
-    
-    // Check if user exists
     const result = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    
-    // Always return success to prevent email enumeration
     res.json({ success: true, message: 'If the email exists, a reset link has been sent' });
     
     if (result.rows.length > 0) {
-      // TODO: Send password reset email
       console.log(`Password reset requested for: ${email}`);
     }
   } catch (error) {
@@ -370,7 +833,6 @@ app.get('/api/chat/:projectId/messages', authenticateToken, async (req, res) => 
   try {
     const { projectId } = req.params;
 
-    // Verify project ownership
     const projectResult = await pool.query(
       'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
       [projectId, req.user.id]
@@ -397,7 +859,6 @@ app.post('/api/chat/:projectId/messages', authenticateToken, async (req, res) =>
     const { projectId } = req.params;
     const { content } = req.body;
 
-    // Verify project ownership
     const projectResult = await pool.query(
       'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
       [projectId, req.user.id]
@@ -407,7 +868,6 @@ app.post('/api/chat/:projectId/messages', authenticateToken, async (req, res) =>
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    // Save user message
     const userMessageResult = await pool.query(
       `INSERT INTO chat_messages (project_id, role, content)
        VALUES ($1, 'user', $2)
@@ -415,10 +875,8 @@ app.post('/api/chat/:projectId/messages', authenticateToken, async (req, res) =>
       [projectId, content]
     );
 
-    // Generate AI response (placeholder - integrate with OpenAI)
     const aiResponse = `I understand you want to: "${content}". Let me help you with that. This is a placeholder response - please configure your OpenAI API key for actual AI responses.`;
 
-    // Save assistant message
     const assistantMessageResult = await pool.query(
       `INSERT INTO chat_messages (project_id, role, content)
        VALUES ($1, 'assistant', $2)
@@ -485,16 +943,6 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
       [req.user.id]
     );
 
-    const bioResult = await pool.query(
-      'SELECT * FROM biometric_info WHERE user_id = $1',
-      [req.user.id]
-    );
-
-    const onboardingResult = await pool.query(
-      'SELECT * FROM onboarding_progress WHERE user_id = $1',
-      [req.user.id]
-    );
-
     res.json({
       user: {
         id: req.user.id,
@@ -507,8 +955,8 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
       },
       settings: settingsResult.rows[0] || null,
       subscription: subResult.rows[0] || { plan: 'free', status: 'active' },
-      biometrics: bioResult.rows[0] || null,
-      onboarding: onboardingResult.rows[0] || null
+      biometrics: null,
+      onboarding: null
     });
   } catch (error) {
     console.error('Get profile error:', error);
@@ -541,7 +989,6 @@ app.patch('/api/users/settings', authenticateToken, async (req, res) => {
   try {
     const settings = req.body;
 
-    // Upsert settings
     await pool.query(
       `INSERT INTO user_settings (user_id, theme, language, timezone, voice_enabled, voice_language, tts_enabled, tts_provider, editor_font_size, editor_tab_size, auto_save)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -580,7 +1027,7 @@ app.patch('/api/users/settings', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// Stripe Routes (Basic)
+// Stripe Routes
 // ==========================================
 app.get('/api/stripe/plans', (req, res) => {
   res.json({
@@ -642,7 +1089,7 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) =>
       totalUsers: parseInt(usersResult.rows[0].count),
       totalProjects: parseInt(projectsResult.rows[0].count),
       activeSubscriptions: parseInt(subsResult.rows[0].count),
-      monthlyRevenue: 0 // Calculate from Stripe
+      monthlyRevenue: 0
     });
   } catch (error) {
     console.error('Get admin stats error:', error);
@@ -668,12 +1115,11 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
 app.use(express.static(path.join(__dirname, '../dist')));
 
 // SPA fallback - serve index.html for all non-API routes
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(__dirname, '../dist/index.html'));
-  } else {
-    res.status(404).json({ error: 'Not found' });
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'Not found' });
   }
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
 // Error handling middleware
@@ -690,7 +1136,9 @@ ADELE Server Started
 ========================================
 Port: ${PORT}
 Environment: ${process.env.NODE_ENV || 'development'}
+App URL: ${APP_URL}
 Time: ${new Date().toISOString()}
+OAuth Providers: Google, GitHub, Microsoft, Apple, Facebook
 ========================================
   `);
 });
