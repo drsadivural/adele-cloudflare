@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   Plus,
   Trash2,
-  Edit2,
   Save,
   X,
   Loader2,
@@ -16,7 +15,6 @@ import {
   Server,
   Settings,
   Users,
-  Activity,
   Database,
   Shield,
   Check,
@@ -90,9 +88,7 @@ export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState('llms');
   const [llmModels, setLlmModels] = useState<LLMModel[]>(defaultLLMs);
   const [voiceModels, setVoiceModels] = useState<VoiceModel[]>(defaultVoices);
-  const [apiConfigs, setApiConfigs] = useState<APIConfig[]>([]);
-  const [editingLLM, setEditingLLM] = useState<LLMModel | null>(null);
-  const [editingVoice, setEditingVoice] = useState<VoiceModel | null>(null);
+  const [apiConfigs] = useState<APIConfig[]>([]);
   const [showAddLLM, setShowAddLLM] = useState(false);
   const [showAddVoice, setShowAddVoice] = useState(false);
   const [saving, setSaving] = useState(false);
