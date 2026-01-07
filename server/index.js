@@ -2,14 +2,25 @@
  * ADELE - Node.js Express Server for AWS EC2 Deployment
  * With OAuth support for Google, Microsoft, Apple, and GitHub
  */
+import { createRequire } from "module";
+import { fileURLToPath } from "url";
+import path from "path";
 
-require('dotenv').config();
+// Enable CommonJS `require(...)` in ESM
+const require = createRequire(import.meta.url);
+
+// Provide __filename / __dirname (often used in CommonJS code)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load .env
+// require("dotenv").config(); // disabled in docker (env provided by compose)
 
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
-const path = require('path');
+// const path = require('path'); // already provided by ESM header
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');

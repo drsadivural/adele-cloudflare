@@ -33,3 +33,17 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+
+# secrets
+.env
+.env.*
+certs/
+nginx/certs/
+*.pem
+*.key
+
+# logs / runtime
+node_modules/
+npm-debug.log*
+pnpm-debug.log*
+.DS_Store
