@@ -22,6 +22,22 @@ import Terms from "@/pages/Terms";
 import Privacy from "@/pages/Privacy";
 import NotFound from "@/pages/NotFound";
 
+// New Pages
+import Account from "@/pages/Account";
+import SettingsPage from "@/pages/SettingsPage";
+import Usage from "@/pages/Usage";
+import Billing from "@/pages/Billing";
+import MailAdele from "@/pages/MailAdele";
+import ScheduledWorks from "@/pages/ScheduledWorks";
+import DataControls from "@/pages/DataControls";
+import CloudBrowser from "@/pages/CloudBrowser";
+import Connectors from "@/pages/Connectors";
+import Integrations from "@/pages/Integrations";
+import WorkOrders from "@/pages/WorkOrders";
+import AppDeploy from "@/pages/AppDeploy";
+import VoiceCommunication from "@/pages/VoiceCommunication";
+import CloudTools from "@/pages/CloudTools";
+
 // Protected Route wrapper
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -113,6 +129,52 @@ function Router() {
       <Route path="/settings">
         <ProtectedRoute component={Settings} />
       </Route>
+      
+      {/* User Menu Pages */}
+      <Route path="/account">
+        <ProtectedRoute component={Account} />
+      </Route>
+      <Route path="/preferences">
+        <ProtectedRoute component={SettingsPage} />
+      </Route>
+      <Route path="/usage">
+        <ProtectedRoute component={Usage} />
+      </Route>
+      <Route path="/billing">
+        <ProtectedRoute component={Billing} />
+      </Route>
+      <Route path="/mail">
+        <ProtectedRoute component={MailAdele} />
+      </Route>
+      <Route path="/scheduled-works">
+        <ProtectedRoute component={ScheduledWorks} />
+      </Route>
+      <Route path="/data-controls">
+        <ProtectedRoute component={DataControls} />
+      </Route>
+      <Route path="/cloud-browser">
+        <ProtectedRoute component={CloudBrowser} />
+      </Route>
+      <Route path="/connectors">
+        <ProtectedRoute component={Connectors} />
+      </Route>
+      <Route path="/integrations">
+        <ProtectedRoute component={Integrations} />
+      </Route>
+      <Route path="/work-orders">
+        <ProtectedRoute component={WorkOrders} />
+      </Route>
+      <Route path="/app-deploy">
+        <ProtectedRoute component={AppDeploy} />
+      </Route>
+      <Route path="/voice">
+        <ProtectedRoute component={VoiceCommunication} />
+      </Route>
+      <Route path="/cloud-tools">
+        <ProtectedRoute component={CloudTools} />
+      </Route>
+      
+      {/* Admin Routes */}
       <Route path="/admin">
         <ProtectedRoute component={AdminPanel} />
       </Route>

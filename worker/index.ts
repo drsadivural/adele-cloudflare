@@ -11,6 +11,19 @@ import { templateRoutes } from "./routes/templates";
 import { userRoutes } from "./routes/users";
 import { adminRoutes } from "./routes/admin";
 import { stripeRoutes } from "./routes/stripe";
+// New routes
+import { accountRoutes } from "./routes/account";
+import { usageRoutes } from "./routes/usage";
+import { billingRoutes } from "./routes/billing";
+import { workOrderRoutes } from "./routes/workOrders";
+import { deployRoutes } from "./routes/deploy";
+import { scheduledWorksRoutes } from "./routes/scheduledWorks";
+import { connectorsRoutes } from "./routes/connectors";
+import { cloudRoutes } from "./routes/cloud";
+import { voiceRoutes } from "./routes/voice";
+import { dataControlsRoutes } from "./routes/dataControls";
+import { integrationsRoutes } from "./routes/integrations";
+import { auditRoutes } from "./routes/audit";
 import { createEmailService, EmailService } from "./services/email";
 import { rateLimiters } from "./middleware/rateLimit";
 import { 
@@ -55,6 +68,10 @@ export interface Env {
   TWILIO_ACCOUNT_SID?: string;
   TWILIO_AUTH_TOKEN?: string;
   TWILIO_PHONE_NUMBER?: string;
+  // AWS credentials for deployment
+  AWS_ACCESS_KEY_ID?: string;
+  AWS_SECRET_ACCESS_KEY?: string;
+  AWS_REGION?: string;
 }
 
 export type Variables = {
@@ -140,8 +157,9 @@ app.use("*", async (c, next) => {
 app.use("/api/auth/*", rateLimiters.auth);
 app.use("/api/oauth/*", rateLimiters.auth);
 
-// Rate limiting for expensive operations (AI, chat)
+// Rate limiting for expensive operations (AI, chat, voice)
 app.use("/api/chat/*", rateLimiters.expensive);
+app.use("/api/voice/*", rateLimiters.expensive);
 app.use("/api/projects/*/generate", rateLimiters.expensive);
 
 // General API rate limiting
@@ -197,7 +215,6 @@ app.get("/api/health", async (c) => {
       }
     ]
   );
-
   const status = await healthCheck();
   const httpStatus = status.status === "healthy" ? 200 : status.status === "degraded" ? 200 : 503;
 
@@ -349,11 +366,25 @@ app.use("/api/*", async (c, next) => {
   }
 });
 
-// Protected routes
+// Protected routes - Original
 app.route("/api/projects", projectRoutes);
 app.route("/api/chat", chatRoutes);
 app.route("/api/users", userRoutes);
 app.route("/api/admin", adminRoutes);
+
+// Protected routes - New Enterprise Features
+app.route("/api/account", accountRoutes);
+app.route("/api/usage", usageRoutes);
+app.route("/api/billing", billingRoutes);
+app.route("/api/work-orders", workOrderRoutes);
+app.route("/api/deploy", deployRoutes);
+app.route("/api/scheduled-works", scheduledWorksRoutes);
+app.route("/api/connectors", connectorsRoutes);
+app.route("/api/cloud", cloudRoutes);
+app.route("/api/voice", voiceRoutes);
+app.route("/api/data", dataControlsRoutes);
+app.route("/api/integrations", integrationsRoutes);
+app.route("/api/audit", auditRoutes);
 
 // 404 handler
 app.notFound((c) => {
