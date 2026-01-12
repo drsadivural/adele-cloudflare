@@ -393,6 +393,10 @@ app.notFound((c) => {
   return c.json({ error: "Not found" }, 404);
 });
 
+app.get("/api/health", (c) =>
+  c.json({ ok: true, env: c.env.ENVIRONMENT, ts: Date.now() })
+);
+
 // Error handler with tracking
 app.onError(async (err, c) => {
   const logger = c.get("logger");

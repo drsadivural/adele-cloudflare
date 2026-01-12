@@ -1,8 +1,8 @@
 import { Context, Next } from 'hono';
 
 interface RateLimitConfig {
-  windowMs: number;      // Time window in milliseconds
-  maxRequests: number;   // Max requests per window
+  windowMs: number; // Time window in milliseconds
+  maxRequests: number; // Max requests per window
   keyGenerator?: (c: Context) => string;
   skipSuccessfulRequests?: boolean;
   skipFailedRequests?: boolean;
@@ -14,50 +14,56 @@ interface RateLimitEntry {
   resetTime: number;
 }
 
-// In-memory store (for single worker instance)
-// For production with multiple workers, use KV or Durable Objects
+// In-memory store (per isolate)
+// For production with multiple isolates, use KV or Durable Objects
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
-// Clean up expired entries periodically
-setInterval(() => {
-  const now = Date.now();
+// Workers cannot run timers (setInterval/setTimeout) in global scope.
+// We'll do periodic cleanup lazily inside request handlers.
+let lastCleanupAt = 0;
+const CLEANUP_INTERVAL_MS = 60_000; // 1 minute
+
+function cleanupExpiredEntries(now: number) {
+  if (now - lastCleanupAt < CLEANUP_INTERVAL_MS) return;
+  lastCleanupAt = now;
+
   for (const [key, entry] of rateLimitStore.entries()) {
-    if (entry.resetTime < now) {
-      rateLimitStore.delete(key);
-    }
+    if (entry.resetTime < now) rateLimitStore.delete(key);
   }
-}, 60000); // Clean every minute
+}
 
 export function rateLimit(config: RateLimitConfig) {
   const {
     windowMs,
     maxRequests,
-    keyGenerator = (c) => c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown',
+    keyGenerator = (c) =>
+      c.req.header('cf-connecting-ip') ||
+      c.req.header('x-forwarded-for') ||
+      'unknown',
     message = 'Too many requests, please try again later.',
   } = config;
 
   return async (c: Context, next: Next) => {
-    const key = keyGenerator(c);
     const now = Date.now();
-    
+    cleanupExpiredEntries(now);
+
+    const key = keyGenerator(c);
     let entry = rateLimitStore.get(key);
-    
+
     if (!entry || entry.resetTime < now) {
-      // Create new entry
       entry = {
         count: 1,
         resetTime: now + windowMs,
       };
       rateLimitStore.set(key, entry);
     } else {
-      // Increment existing entry
       entry.count++;
     }
 
     // Set rate limit headers
     const remaining = Math.max(0, maxRequests - entry.count);
     const resetSeconds = Math.ceil((entry.resetTime - now) / 1000);
-    
+
     c.header('X-RateLimit-Limit', String(maxRequests));
     c.header('X-RateLimit-Remaining', String(remaining));
     c.header('X-RateLimit-Reset', String(resetSeconds));
@@ -98,7 +104,8 @@ export const rateLimiters = {
   expensive: rateLimit({
     windowMs: 60 * 1000, // 1 minute
     maxRequests: 10,
-    message: 'Rate limit for AI operations exceeded. Please wait before making more requests.',
+    message:
+      'Rate limit for AI operations exceeded. Please wait before making more requests.',
   }),
 
   // Very strict for password reset
@@ -133,14 +140,16 @@ export function createKVRateLimiter(kv: KVNamespace, config: RateLimitConfig) {
   } = config;
 
   return async (c: Context, next: Next) => {
-    const key = `ratelimit:${keyGenerator(c)}`;
     const now = Date.now();
 
+    // Optional: avoid KV hot-spots by keeping keys short but deterministic
+    const key = `ratelimit:${keyGenerator(c)}`;
+
     // Get current count from KV
-    const stored = await kv.get(key, 'json') as RateLimitEntry | null;
-    
+    const stored = (await kv.get(key, 'json')) as RateLimitEntry | null;
+
     let entry: RateLimitEntry;
-    
+
     if (!stored || stored.resetTime < now) {
       entry = {
         count: 1,
@@ -154,13 +163,13 @@ export function createKVRateLimiter(kv: KVNamespace, config: RateLimitConfig) {
     }
 
     // Store updated count
-    const ttl = Math.ceil((entry.resetTime - now) / 1000);
+    const ttl = Math.max(1, Math.ceil((entry.resetTime - now) / 1000));
     await kv.put(key, JSON.stringify(entry), { expirationTtl: ttl });
 
     // Set headers
     const remaining = Math.max(0, maxRequests - entry.count);
     const resetSeconds = Math.ceil((entry.resetTime - now) / 1000);
-    
+
     c.header('X-RateLimit-Limit', String(maxRequests));
     c.header('X-RateLimit-Remaining', String(remaining));
     c.header('X-RateLimit-Reset', String(resetSeconds));
@@ -192,27 +201,43 @@ export function slidingWindowRateLimit(config: RateLimitConfig) {
 
   const requestLog = new Map<string, number[]>();
 
+  // Lazy cleanup for sliding window state too (avoid unbounded growth)
+  let lastSlidingCleanupAt = 0;
+  const SLIDING_CLEANUP_INTERVAL_MS = 60_000;
+
+  function cleanupSliding(now: number) {
+    if (now - lastSlidingCleanupAt < SLIDING_CLEANUP_INTERVAL_MS) return;
+    lastSlidingCleanupAt = now;
+
+    // Remove keys with empty arrays (or very old ones)
+    for (const [key, arr] of requestLog.entries()) {
+      if (!arr || arr.length === 0) requestLog.delete(key);
+    }
+  }
+
   return async (c: Context, next: Next) => {
-    const key = keyGenerator(c);
     const now = Date.now();
+    cleanupSliding(now);
+
+    const key = keyGenerator(c);
     const windowStart = now - windowMs;
 
     // Get or create request timestamps array
     let timestamps = requestLog.get(key) || [];
-    
+
     // Filter out old timestamps
-    timestamps = timestamps.filter(ts => ts > windowStart);
-    
+    timestamps = timestamps.filter((ts) => ts > windowStart);
+
     // Check if limit exceeded
     if (timestamps.length >= maxRequests) {
       const oldestInWindow = timestamps[0];
       const retryAfter = Math.ceil((oldestInWindow + windowMs - now) / 1000);
-      
+
       c.header('X-RateLimit-Limit', String(maxRequests));
       c.header('X-RateLimit-Remaining', '0');
       c.header('X-RateLimit-Reset', String(retryAfter));
       c.header('Retry-After', String(retryAfter));
-      
+
       return c.json(
         {
           error: 'rate_limit_exceeded',
@@ -236,16 +261,36 @@ export function slidingWindowRateLimit(config: RateLimitConfig) {
   };
 }
 
-// IP-based blocking for repeated violations
+// IP-based blocking for repeated violations (per isolate)
 const blockedIPs = new Map<string, number>();
+
+// Lazy cleanup for blocked IPs too
+let lastBlockedCleanupAt = 0;
+const BLOCKED_CLEANUP_INTERVAL_MS = 60_000;
+
+function cleanupBlocked(now: number) {
+  if (now - lastBlockedCleanupAt < BLOCKED_CLEANUP_INTERVAL_MS) return;
+  lastBlockedCleanupAt = now;
+
+  for (const [ip, until] of blockedIPs.entries()) {
+    if (until <= now) blockedIPs.delete(ip);
+  }
+}
 
 export function ipBlocker(blockDurationMs: number = 24 * 60 * 60 * 1000) {
   return async (c: Context, next: Next) => {
-    const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+    const now = Date.now();
+    cleanupBlocked(now);
+
+    const ip =
+      c.req.header('cf-connecting-ip') ||
+      c.req.header('x-forwarded-for') ||
+      'unknown';
+
     const blockedUntil = blockedIPs.get(ip);
-    
-    if (blockedUntil && blockedUntil > Date.now()) {
-      const retryAfter = Math.ceil((blockedUntil - Date.now()) / 1000);
+
+    if (blockedUntil && blockedUntil > now) {
+      const retryAfter = Math.ceil((blockedUntil - now) / 1000);
       return c.json(
         {
           error: 'ip_blocked',
@@ -267,3 +312,4 @@ export function blockIP(ip: string, durationMs: number = 24 * 60 * 60 * 1000) {
 export function unblockIP(ip: string) {
   blockedIPs.delete(ip);
 }
+

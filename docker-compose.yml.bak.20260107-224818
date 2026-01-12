@@ -67,10 +67,10 @@ services:
     networks:
       - adele-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-adele} -d ${POSTGRES_DB:-adele} -h 127.0.0.1"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
 
   adele-redis:
     image: redis:7-alpine
@@ -82,10 +82,10 @@ services:
     networks:
       - adele-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
 
   adele-nginx:
     image: nginx:alpine

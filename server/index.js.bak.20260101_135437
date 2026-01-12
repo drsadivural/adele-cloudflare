@@ -1,0 +1,1157 @@
+/**
+ * ADELE - Node.js Express Server for AWS EC2 Deployment
+ * With OAuth support for Google, Microsoft, Apple, and GitHub
+ */
+
+require('dotenv').config();
+
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
+const path = require('path');
+const { Pool } = require('pg');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const APP_URL = process.env.APP_URL || 'https://adele.ayonix.com';
+
+// Database connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+// Middleware
+app.use(helmet({
+  contentSecurityPolicy: false,
+}));
+app.use(compression());
+app.use(cors({
+  origin: APP_URL,
+  credentials: true
+}));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// Request logging
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
+  next();
+});
+
+// JWT Authentication middleware
+const authenticateToken = async (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const result = await pool.query('SELECT * FROM users WHERE id = $1', [decoded.userId]);
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    req.user = result.rows[0];
+    next();
+  } catch (error) {
+    return res.status(403).json({ error: 'Invalid token' });
+  }
+};
+
+// Helper function to create or update OAuth user
+async function findOrCreateOAuthUser(email, name, provider, providerId, avatarUrl = null) {
+  // Check if user exists
+  let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+  
+  if (result.rows.length > 0) {
+    // Update last signed in
+    await pool.query('UPDATE users SET last_signed_in = NOW() WHERE id = $1', [result.rows[0].id]);
+    return result.rows[0];
+  }
+
+  // Create new user
+  const randomPassword = crypto.randomBytes(32).toString('hex');
+  const passwordHash = await bcrypt.hash(randomPassword, 12);
+
+  result = await pool.query(
+    `INSERT INTO users (email, password_hash, name, role, email_verified, avatar_url, oauth_provider, oauth_provider_id) 
+     VALUES ($1, $2, $3, 'user', true, $4, $5, $6) 
+     RETURNING *`,
+    [email, passwordHash, name, avatarUrl, provider, providerId]
+  );
+
+  const user = result.rows[0];
+
+  // Create default settings
+  await pool.query('INSERT INTO user_settings (user_id) VALUES ($1)', [user.id]);
+
+  return user;
+}
+
+// Generate JWT token for user
+function generateToken(user) {
+  return jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+}
+
+// ==========================================
+// Health Check
+// ==========================================
+app.get('/api/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ 
+      status: 'healthy', 
+      timestamp: new Date().toISOString(),
+      version: process.env.VERSION || '1.0.0'
+    });
+  } catch (error) {
+    res.status(500).json({ status: 'unhealthy', error: error.message });
+  }
+});
+
+// ==========================================
+// OAuth Routes - Google
+// ==========================================
+app.get('/api/auth/oauth/google', (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'Google OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/google/callback`;
+  const scope = encodeURIComponent('openid email profile');
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}&access_type=offline&prompt=consent`;
+  
+  res.redirect(authUrl);
+});
+
+app.get('/api/auth/oauth/google/callback', async (req, res) => {
+  try {
+    const { code, error } = req.query;
+    
+    if (error) {
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    // Exchange code for tokens
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: `${APP_URL}/api/auth/oauth/google/callback`,
+        grant_type: 'authorization_code'
+      })
+    });
+
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('Google token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Get user info
+    const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` }
+    });
+
+    const googleUser = await userResponse.json();
+    
+    if (!googleUser.email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      googleUser.email,
+      googleUser.name || googleUser.email.split('@')[0],
+      'google',
+      googleUser.id,
+      googleUser.picture
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Google OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// ==========================================
+// OAuth Routes - GitHub
+// ==========================================
+app.get('/api/auth/oauth/github', (req, res) => {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'GitHub OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/github/callback`;
+  const scope = 'user:email';
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${state}`;
+  
+  res.redirect(authUrl);
+});
+
+app.get('/api/auth/oauth/github/callback', async (req, res) => {
+  try {
+    const { code, error } = req.query;
+    
+    if (error) {
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    // Exchange code for token
+    const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code,
+        redirect_uri: `${APP_URL}/api/auth/oauth/github/callback`
+      })
+    });
+
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('GitHub token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Get user info
+    const userResponse = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${tokens.access_token}`,
+        'User-Agent': 'ADELE-App'
+      }
+    });
+
+    const githubUser = await userResponse.json();
+
+    // Get user email if not public
+    let email = githubUser.email;
+    if (!email) {
+      const emailResponse = await fetch('https://api.github.com/user/emails', {
+        headers: {
+          Authorization: `Bearer ${tokens.access_token}`,
+          'User-Agent': 'ADELE-App'
+        }
+      });
+      const emails = await emailResponse.json();
+      const primaryEmail = emails.find(e => e.primary) || emails[0];
+      email = primaryEmail?.email;
+    }
+
+    if (!email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      email,
+      githubUser.name || githubUser.login,
+      'github',
+      String(githubUser.id),
+      githubUser.avatar_url
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('GitHub OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// ==========================================
+// OAuth Routes - Microsoft
+// ==========================================
+app.get('/api/auth/oauth/microsoft', (req, res) => {
+  const clientId = process.env.MICROSOFT_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'Microsoft OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/microsoft/callback`;
+  const scope = encodeURIComponent('openid email profile User.Read');
+  const state = crypto.randomBytes(16).toString('hex');
+  const tenant = process.env.MICROSOFT_TENANT_ID || 'common';
+  
+  const authUrl = `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}&response_mode=query`;
+  
+  res.redirect(authUrl);
+});
+
+app.get('/api/auth/oauth/microsoft/callback', async (req, res) => {
+  try {
+    const { code, error, error_description } = req.query;
+    
+    if (error) {
+      console.error('Microsoft OAuth error:', error, error_description);
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    const tenant = process.env.MICROSOFT_TENANT_ID || 'common';
+
+    // Exchange code for tokens
+    const tokenResponse = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.MICROSOFT_CLIENT_ID,
+        client_secret: process.env.MICROSOFT_CLIENT_SECRET,
+        redirect_uri: `${APP_URL}/api/auth/oauth/microsoft/callback`,
+        grant_type: 'authorization_code',
+        scope: 'openid email profile User.Read'
+      })
+    });
+
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('Microsoft token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Get user info
+    const userResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` }
+    });
+
+    const msUser = await userResponse.json();
+    
+    const email = msUser.mail || msUser.userPrincipalName;
+    if (!email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      email,
+      msUser.displayName || email.split('@')[0],
+      'microsoft',
+      msUser.id,
+      null
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Microsoft OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// ==========================================
+// OAuth Routes - Apple
+// ==========================================
+app.get('/api/auth/oauth/apple', (req, res) => {
+  const clientId = process.env.APPLE_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'Apple OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/apple/callback`;
+  const scope = 'name email';
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  const authUrl = `https://appleid.apple.com/auth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&state=${state}&response_mode=form_post`;
+  
+  res.redirect(authUrl);
+});
+
+app.post('/api/auth/oauth/apple/callback', async (req, res) => {
+  try {
+    const { code, error, user: appleUserData } = req.body;
+    
+    if (error) {
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    // Generate client secret for Apple
+    const clientSecret = generateAppleClientSecret();
+
+    // Exchange code for tokens
+    const tokenResponse = await fetch('https://appleid.apple.com/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.APPLE_CLIENT_ID,
+        client_secret: clientSecret,
+        redirect_uri: `${APP_URL}/api/auth/oauth/apple/callback`,
+        grant_type: 'authorization_code'
+      })
+    });
+
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('Apple token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Decode ID token to get user info
+    const idTokenParts = tokens.id_token.split('.');
+    const payload = JSON.parse(Buffer.from(idTokenParts[1], 'base64').toString());
+    
+    const email = payload.email;
+    if (!email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Parse user data if provided (only on first login)
+    let name = email.split('@')[0];
+    if (appleUserData) {
+      try {
+        const userData = typeof appleUserData === 'string' ? JSON.parse(appleUserData) : appleUserData;
+        if (userData.name) {
+          name = `${userData.name.firstName || ''} ${userData.name.lastName || ''}`.trim() || name;
+        }
+      } catch (e) {
+        console.error('Error parsing Apple user data:', e);
+      }
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      email,
+      name,
+      'apple',
+      payload.sub,
+      null
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Apple OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// Generate Apple client secret (JWT)
+function generateAppleClientSecret() {
+  const privateKey = process.env.APPLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  const teamId = process.env.APPLE_TEAM_ID;
+  const clientId = process.env.APPLE_CLIENT_ID;
+  const keyId = process.env.APPLE_KEY_ID;
+
+  if (!privateKey || !teamId || !clientId || !keyId) {
+    throw new Error('Apple OAuth not fully configured');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = {
+    alg: 'ES256',
+    kid: keyId
+  };
+  const payload = {
+    iss: teamId,
+    iat: now,
+    exp: now + 86400 * 180, // 180 days
+    aud: 'https://appleid.apple.com',
+    sub: clientId
+  };
+
+  // Simple JWT signing (you may want to use a library for production)
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signatureInput = `${headerB64}.${payloadB64}`;
+  
+  const sign = crypto.createSign('SHA256');
+  sign.update(signatureInput);
+  const signature = sign.sign(privateKey, 'base64url');
+
+  return `${signatureInput}.${signature}`;
+}
+
+// ==========================================
+// OAuth Routes - Facebook
+// ==========================================
+app.get('/api/auth/oauth/facebook', (req, res) => {
+  const clientId = process.env.FACEBOOK_APP_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'Facebook OAuth not configured' });
+  }
+
+  const redirectUri = `${APP_URL}/api/auth/oauth/facebook/callback`;
+  const scope = 'email,public_profile';
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${state}`;
+  
+  res.redirect(authUrl);
+});
+
+app.get('/api/auth/oauth/facebook/callback', async (req, res) => {
+  try {
+    const { code, error } = req.query;
+    
+    if (error) {
+      return res.redirect(`${APP_URL}/login?error=${encodeURIComponent(error)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${APP_URL}/login?error=no_code`);
+    }
+
+    // Exchange code for token
+    const tokenUrl = `https://graph.facebook.com/v18.0/oauth/access_token?client_id=${process.env.FACEBOOK_APP_ID}&client_secret=${process.env.FACEBOOK_APP_SECRET}&redirect_uri=${encodeURIComponent(`${APP_URL}/api/auth/oauth/facebook/callback`)}&code=${code}`;
+    
+    const tokenResponse = await fetch(tokenUrl);
+    const tokens = await tokenResponse.json();
+    
+    if (tokens.error) {
+      console.error('Facebook token error:', tokens);
+      return res.redirect(`${APP_URL}/login?error=token_error`);
+    }
+
+    // Get user info
+    const userResponse = await fetch(`https://graph.facebook.com/me?fields=id,name,email,picture&access_token=${tokens.access_token}`);
+    const fbUser = await userResponse.json();
+    
+    if (!fbUser.email) {
+      return res.redirect(`${APP_URL}/login?error=no_email`);
+    }
+
+    // Find or create user
+    const user = await findOrCreateOAuthUser(
+      fbUser.email,
+      fbUser.name || fbUser.email.split('@')[0],
+      'facebook',
+      fbUser.id,
+      fbUser.picture?.data?.url
+    );
+
+    // Generate JWT
+    const token = generateToken(user);
+
+    // Redirect to frontend with token
+    res.redirect(`${APP_URL}/oauth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Facebook OAuth error:', error);
+    res.redirect(`${APP_URL}/login?error=oauth_failed`);
+  }
+});
+
+// ==========================================
+// Standard Authentication Routes
+// ==========================================
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+
+    if (!email || !password || !name) {
+      return res.status(400).json({ error: 'Email, password, and name are required' });
+    }
+
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const result = await pool.query(
+      `INSERT INTO users (email, password_hash, name, role) 
+       VALUES ($1, $2, $3, 'user') 
+       RETURNING id, email, name, role, created_at`,
+      [email, passwordHash, name]
+    );
+
+    const user = result.rows[0];
+
+    await pool.query('INSERT INTO user_settings (user_id) VALUES ($1)', [user.id]);
+
+    const token = generateToken(user);
+
+    res.json({
+      success: true,
+      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+      token
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const user = result.rows[0];
+
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    await pool.query('UPDATE users SET last_signed_in = NOW() WHERE id = $1', [user.id]);
+
+    const token = generateToken(user);
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        avatarUrl: user.avatar_url
+      },
+      token
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+  try {
+    const subResult = await pool.query(
+      'SELECT plan, status, current_period_end, cancel_at_period_end FROM subscriptions WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    res.json({
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        name: req.user.name,
+        role: req.user.role,
+        avatarUrl: req.user.avatar_url,
+        emailVerified: req.user.email_verified,
+        createdAt: req.user.created_at
+      },
+      subscription: subResult.rows[0] || { plan: 'free', status: 'active' }
+    });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ error: 'Failed to get user' });
+  }
+});
+
+app.post('/api/auth/logout', authenticateToken, (req, res) => {
+  res.json({ success: true });
+});
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const result = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    res.json({ success: true, message: 'If the email exists, a reset link has been sent' });
+    
+    if (result.rows.length > 0) {
+      console.log(`Password reset requested for: ${email}`);
+    }
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Failed to process request' });
+  }
+});
+
+// ==========================================
+// Projects Routes
+// ==========================================
+app.get('/api/projects', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM projects WHERE user_id = $1 ORDER BY updated_at DESC',
+      [req.user.id]
+    );
+    res.json({ projects: result.rows });
+  } catch (error) {
+    console.error('Get projects error:', error);
+    res.status(500).json({ error: 'Failed to get projects' });
+  }
+});
+
+app.get('/api/projects/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const projectResult = await pool.query(
+      'SELECT * FROM projects WHERE id = $1 AND user_id = $2',
+      [id, req.user.id]
+    );
+    
+    if (projectResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const filesResult = await pool.query(
+      'SELECT * FROM generated_files WHERE project_id = $1 ORDER BY path',
+      [id]
+    );
+
+    const tasksResult = await pool.query(
+      'SELECT * FROM agent_tasks WHERE project_id = $1 ORDER BY created_at DESC',
+      [id]
+    );
+
+    res.json({
+      project: projectResult.rows[0],
+      files: filesResult.rows,
+      tasks: tasksResult.rows
+    });
+  } catch (error) {
+    console.error('Get project error:', error);
+    res.status(500).json({ error: 'Failed to get project' });
+  }
+});
+
+app.post('/api/projects', authenticateToken, async (req, res) => {
+  try {
+    const { name, description, type, techStack } = req.body;
+
+    const result = await pool.query(
+      `INSERT INTO projects (user_id, name, description, type, tech_stack, status)
+       VALUES ($1, $2, $3, $4, $5, 'draft')
+       RETURNING *`,
+      [req.user.id, name, description || '', type || 'custom', JSON.stringify(techStack || [])]
+    );
+
+    res.json({ project: result.rows[0] });
+  } catch (error) {
+    console.error('Create project error:', error);
+    res.status(500).json({ error: 'Failed to create project' });
+  }
+});
+
+app.patch('/api/projects/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, status } = req.body;
+
+    const result = await pool.query(
+      `UPDATE projects 
+       SET name = COALESCE($1, name), 
+           description = COALESCE($2, description),
+           status = COALESCE($3, status),
+           updated_at = NOW()
+       WHERE id = $4 AND user_id = $5
+       RETURNING *`,
+      [name, description, status, id, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    res.json({ project: result.rows[0] });
+  } catch (error) {
+    console.error('Update project error:', error);
+    res.status(500).json({ error: 'Failed to update project' });
+  }
+});
+
+app.delete('/api/projects/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      'DELETE FROM projects WHERE id = $1 AND user_id = $2 RETURNING id',
+      [id, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete project error:', error);
+    res.status(500).json({ error: 'Failed to delete project' });
+  }
+});
+
+// ==========================================
+// Chat Routes
+// ==========================================
+app.get('/api/chat/:projectId/messages', authenticateToken, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+
+    const projectResult = await pool.query(
+      'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
+      [projectId, req.user.id]
+    );
+
+    if (projectResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM chat_messages WHERE project_id = $1 ORDER BY created_at ASC',
+      [projectId]
+    );
+
+    res.json({ messages: result.rows });
+  } catch (error) {
+    console.error('Get messages error:', error);
+    res.status(500).json({ error: 'Failed to get messages' });
+  }
+});
+
+app.post('/api/chat/:projectId/messages', authenticateToken, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { content } = req.body;
+
+    const projectResult = await pool.query(
+      'SELECT id FROM projects WHERE id = $1 AND user_id = $2',
+      [projectId, req.user.id]
+    );
+
+    if (projectResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const userMessageResult = await pool.query(
+      `INSERT INTO chat_messages (project_id, role, content)
+       VALUES ($1, 'user', $2)
+       RETURNING *`,
+      [projectId, content]
+    );
+
+    const aiResponse = `I understand you want to: "${content}". Let me help you with that. This is a placeholder response - please configure your OpenAI API key for actual AI responses.`;
+
+    const assistantMessageResult = await pool.query(
+      `INSERT INTO chat_messages (project_id, role, content)
+       VALUES ($1, 'assistant', $2)
+       RETURNING *`,
+      [projectId, aiResponse]
+    );
+
+    res.json({
+      userMessage: userMessageResult.rows[0],
+      assistantMessage: assistantMessageResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Send message error:', error);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+// ==========================================
+// Templates Routes
+// ==========================================
+app.get('/api/templates', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM app_templates WHERE is_active = true ORDER BY usage_count DESC'
+    );
+    res.json({ templates: result.rows });
+  } catch (error) {
+    console.error('Get templates error:', error);
+    res.status(500).json({ error: 'Failed to get templates' });
+  }
+});
+
+app.get('/api/templates/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM app_templates WHERE id = $1 AND is_active = true',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    res.json({ template: result.rows[0] });
+  } catch (error) {
+    console.error('Get template error:', error);
+    res.status(500).json({ error: 'Failed to get template' });
+  }
+});
+
+// ==========================================
+// User Profile Routes
+// ==========================================
+app.get('/api/users/profile', authenticateToken, async (req, res) => {
+  try {
+    const settingsResult = await pool.query(
+      'SELECT * FROM user_settings WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    const subResult = await pool.query(
+      'SELECT * FROM subscriptions WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    res.json({
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        name: req.user.name,
+        role: req.user.role,
+        avatarUrl: req.user.avatar_url,
+        emailVerified: req.user.email_verified,
+        createdAt: req.user.created_at
+      },
+      settings: settingsResult.rows[0] || null,
+      subscription: subResult.rows[0] || { plan: 'free', status: 'active' },
+      biometrics: null,
+      onboarding: null
+    });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ error: 'Failed to get profile' });
+  }
+});
+
+app.patch('/api/users/profile', authenticateToken, async (req, res) => {
+  try {
+    const { name, avatarUrl } = req.body;
+
+    const result = await pool.query(
+      `UPDATE users 
+       SET name = COALESCE($1, name), 
+           avatar_url = COALESCE($2, avatar_url),
+           updated_at = NOW()
+       WHERE id = $3
+       RETURNING id, email, name, role, avatar_url, email_verified, created_at`,
+      [name, avatarUrl, req.user.id]
+    );
+
+    res.json({ user: result.rows[0] });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+app.patch('/api/users/settings', authenticateToken, async (req, res) => {
+  try {
+    const settings = req.body;
+
+    await pool.query(
+      `INSERT INTO user_settings (user_id, theme, language, timezone, voice_enabled, voice_language, tts_enabled, tts_provider, editor_font_size, editor_tab_size, auto_save)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (user_id) DO UPDATE SET
+         theme = COALESCE($2, user_settings.theme),
+         language = COALESCE($3, user_settings.language),
+         timezone = COALESCE($4, user_settings.timezone),
+         voice_enabled = COALESCE($5, user_settings.voice_enabled),
+         voice_language = COALESCE($6, user_settings.voice_language),
+         tts_enabled = COALESCE($7, user_settings.tts_enabled),
+         tts_provider = COALESCE($8, user_settings.tts_provider),
+         editor_font_size = COALESCE($9, user_settings.editor_font_size),
+         editor_tab_size = COALESCE($10, user_settings.editor_tab_size),
+         auto_save = COALESCE($11, user_settings.auto_save),
+         updated_at = NOW()`,
+      [
+        req.user.id,
+        settings.theme,
+        settings.language,
+        settings.timezone,
+        settings.voiceEnabled,
+        settings.voiceLanguage,
+        settings.ttsEnabled,
+        settings.ttsProvider,
+        settings.editorFontSize,
+        settings.editorTabSize,
+        settings.autoSave
+      ]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update settings error:', error);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+// ==========================================
+// Stripe Routes
+// ==========================================
+app.get('/api/stripe/plans', (req, res) => {
+  res.json({
+    plans: {
+      free: {
+        name: 'Free',
+        price: 0,
+        features: ['5 projects', 'Basic templates', 'Community support']
+      },
+      pro: {
+        name: 'Pro',
+        price: 29,
+        features: ['Unlimited projects', 'All templates', 'Priority support', 'Custom domains']
+      },
+      enterprise: {
+        name: 'Enterprise',
+        price: 99,
+        features: ['Everything in Pro', 'Team collaboration', 'SSO', 'Dedicated support']
+      }
+    }
+  });
+});
+
+app.get('/api/stripe/subscription', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM subscriptions WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    res.json({
+      subscription: result.rows[0] || { plan: 'free', status: 'active' }
+    });
+  } catch (error) {
+    console.error('Get subscription error:', error);
+    res.status(500).json({ error: 'Failed to get subscription' });
+  }
+});
+
+// ==========================================
+// Admin Routes
+// ==========================================
+const requireAdmin = async (req, res, next) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+};
+
+app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const usersResult = await pool.query('SELECT COUNT(*) as count FROM users');
+    const projectsResult = await pool.query('SELECT COUNT(*) as count FROM projects');
+    const subsResult = await pool.query(
+      "SELECT COUNT(*) as count FROM subscriptions WHERE status = 'active' AND plan != 'free'"
+    );
+
+    res.json({
+      totalUsers: parseInt(usersResult.rows[0].count),
+      totalProjects: parseInt(projectsResult.rows[0].count),
+      activeSubscriptions: parseInt(subsResult.rows[0].count),
+      monthlyRevenue: 0
+    });
+  } catch (error) {
+    console.error('Get admin stats error:', error);
+    res.status(500).json({ error: 'Failed to get stats' });
+  }
+});
+
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, email, name, role, email_verified, created_at, last_signed_in FROM users ORDER BY created_at DESC'
+    );
+    res.json({ users: result.rows });
+  } catch (error) {
+    console.error('Get admin users error:', error);
+    res.status(500).json({ error: 'Failed to get users' });
+  }
+});
+
+// ==========================================
+// Serve Static Frontend
+// ==========================================
+app.use(express.static(path.join(__dirname, '../dist')));
+
+// SPA fallback - serve index.html for all non-API routes
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// Start server
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`
+========================================
+ADELE Server Started
+========================================
+Port: ${PORT}
+Environment: ${process.env.NODE_ENV || 'development'}
+App URL: ${APP_URL}
+Time: ${new Date().toISOString()}
+OAuth Providers: Google, GitHub, Microsoft, Apple, Facebook
+========================================
+  `);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  await pool.end();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  await pool.end();
+  process.exit(0);
+});

@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "worker:dev": "wrangler dev",
     "worker:deploy": "wrangler deploy",
-    "db:generate": "drizzle-kit generate --config=drizzle.config.ts",
+    "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply adele-db --local",
     "db:migrate:prod": "wrangler d1 migrations apply adele-db --remote",
     "pages:dev": "wrangler pages dev dist --compatibility-date=2024-01-01",
@@ -19,6 +19,7 @@
     "format": "prettier --write ."
   },
   "dependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
     "@hookform/resolvers": "^3.9.0",
     "@radix-ui/react-accordion": "^1.2.0",
     "@radix-ui/react-alert-dialog": "^1.1.1",
@@ -59,14 +60,12 @@
     "recharts": "^2.12.7",
     "sonner": "^1.5.0",
     "streamdown": "^1.4.0",
-    "stripe": "^20.1.2",
     "tailwind-merge": "^2.5.2",
     "tailwindcss-animate": "^1.0.7",
     "wouter": "^3.3.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260111.0",
     "@tailwindcss/typography": "^0.5.15",
     "@types/node": "^22.5.5",
     "@types/react": "^18.3.5",
@@ -80,6 +79,6 @@
     "typescript": "^5.6.2",
     "vite": "^5.4.5",
     "vitest": "^2.1.1",
-    "wrangler": "^4.58.0"
+    "wrangler": "^3.78.2"
   }
 }

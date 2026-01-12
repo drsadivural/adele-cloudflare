@@ -378,3 +378,5 @@ function normalizeUserData(provider: string, data: any) {
 }
 
 export default oauth;
+
+export const oauthRoutes = oauth;

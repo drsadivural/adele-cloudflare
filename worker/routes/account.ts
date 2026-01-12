@@ -3,7 +3,7 @@ import { eq, and, desc } from "drizzle-orm";
 import * as schema from "../../drizzle/schema";
 import { authMiddleware } from "../middleware/auth";
 import { Env, Variables } from "../index";
-import * as crypto from "crypto";
+import * as crypto from "node:crypto";
 
 const account = new Hono<{ Bindings: Env; Variables: Variables }>();
 
