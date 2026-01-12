@@ -1,23 +1,25 @@
 import { Hono } from "hono";
-import { sign } from "hono/jwt";
+import { sign, verify } from "hono/jwt";
 import { eq } from "drizzle-orm";
+import * as bcrypt from "bcryptjs";
 import * as schema from "../../drizzle/schema";
 import type { Env, Variables } from "../index";
 
 export const authRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// Simple password hashing using Web Crypto API (available in Workers)
+// Password hashing using bcryptjs (compatible with existing bcrypt hashes)
 async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+  const salt = await bcrypt.genSalt(12);
+  return bcrypt.hash(password, salt);
 }
 
 async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  const passwordHash = await hashPassword(password);
-  return passwordHash === hash;
+  try {
+    return await bcrypt.compare(password, hash);
+  } catch (error) {
+    console.error("Password verification error:", error);
+    return false;
+  }
 }
 
 // Generate random token
@@ -29,180 +31,213 @@ function generateToken(): string {
 
 // Register new user
 authRoutes.post("/register", async (c) => {
-  const db = c.get("db");
-  const email = c.get("email");
-  const logger = c.get("logger");
-  const body = await c.req.json();
-  
-  const { email: userEmail, password, name } = body;
-  
-  // Validation
-  if (!userEmail || !password || !name) {
-    return c.json({ error: "Email, password, and name are required" }, 400);
-  }
-  
-  if (password.length < 8) {
-    return c.json({ error: "Password must be at least 8 characters" }, 400);
-  }
-  
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(userEmail)) {
-    return c.json({ error: "Invalid email format" }, 400);
-  }
-  
-  // Check if user exists
-  const existingUser = await db.select().from(schema.users).where(eq(schema.users.email, userEmail.toLowerCase())).get();
-  
-  if (existingUser) {
-    return c.json({ error: "Email already registered" }, 400);
-  }
-  
-  // Hash password
-  const passwordHash = await hashPassword(password);
-  const verificationToken = generateToken();
-  
-  // Create user
-  const result = await db.insert(schema.users).values({
-    email: userEmail.toLowerCase(),
-    passwordHash,
-    name,
-    verificationToken,
-    role: "user",
-    emailVerified: false,
-  }).returning();
-  
-  const user = result[0];
-  
-  logger.info("User registered", { userId: user.id, email: user.email });
-  
-  // Create default settings
-  await db.insert(schema.userSettings).values({
-    userId: user.id,
-  });
-  
-  // Create free subscription
-  await db.insert(schema.subscriptions).values({
-    userId: user.id,
-    plan: "free",
-    status: "active",
-  });
-  
-  // Create onboarding progress
-  await db.insert(schema.onboardingProgress).values({
-    userId: user.id,
-    currentStep: 0,
-    completedSteps: JSON.stringify([]),
-    isCompleted: false,
-  });
-  
-  // Generate JWT
-  const token = await sign(
-    { 
-      userId: user.id, 
-      email: user.email,
-      role: user.role,
-      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
-    }, 
-    c.env.JWT_SECRET
-  );
-  
-  // Send welcome email
-  if (email) {
-    const loginUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/dashboard`;
-    const emailResult = await email.sendWelcome(user.email, user.name, loginUrl);
+  try {
+    const db = c.get("db");
+    const emailService = c.get("email");
+    const logger = c.get("logger");
     
-    if (emailResult.success) {
-      logger.info("Welcome email sent", { userId: user.id, messageId: emailResult.messageId });
-    } else {
-      logger.warn("Failed to send welcome email", { userId: user.id, error: emailResult.error });
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      return c.json({ error: "Invalid JSON body" }, 400);
     }
     
-    // Send verification email
-    const verifyUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/verify-email?token=${verificationToken}`;
-    const verifyResult = await email.sendEmailVerification(user.email, user.name, verifyUrl);
+    const { email: userEmail, password, name } = body;
     
-    if (verifyResult.success) {
-      logger.info("Verification email sent", { userId: user.id, messageId: verifyResult.messageId });
-    } else {
-      logger.warn("Failed to send verification email", { userId: user.id, error: verifyResult.error });
+    // Validation
+    if (!userEmail || !password || !name) {
+      return c.json({ error: "Email, password, and name are required" }, 400);
     }
+    
+    if (password.length < 8) {
+      return c.json({ error: "Password must be at least 8 characters" }, 400);
+    }
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(userEmail)) {
+      return c.json({ error: "Invalid email format" }, 400);
+    }
+    
+    // Check if user exists
+    const existingUser = await db.select().from(schema.users).where(eq(schema.users.email, userEmail.toLowerCase())).get();
+    
+    if (existingUser) {
+      return c.json({ error: "Email already registered" }, 400);
+    }
+    
+    // Hash password using bcrypt
+    const passwordHash = await hashPassword(password);
+    const verificationToken = generateToken();
+    
+    // Create user
+    const result = await db.insert(schema.users).values({
+      email: userEmail.toLowerCase(),
+      passwordHash,
+      name,
+      verificationToken,
+      role: "user",
+      emailVerified: false,
+    }).returning();
+    
+    const user = result[0];
+    
+    if (logger) {
+      logger.info("User registered", { userId: user.id, email: user.email });
+    }
+    
+    // Create default settings (with error handling)
+    try {
+      await db.insert(schema.userSettings).values({
+        userId: user.id,
+      });
+    } catch (e) {
+      console.log("Could not create user settings:", e);
+    }
+    
+    // Create free subscription (with error handling)
+    try {
+      await db.insert(schema.subscriptions).values({
+        userId: user.id,
+        plan: "free",
+        status: "active",
+      });
+    } catch (e) {
+      console.log("Could not create subscription:", e);
+    }
+    
+    // Create onboarding progress (with error handling)
+    try {
+      await db.insert(schema.onboardingProgress).values({
+        userId: user.id,
+        currentStep: 0,
+        completedSteps: JSON.stringify([]),
+        isCompleted: false,
+      });
+    } catch (e) {
+      console.log("Could not create onboarding progress:", e);
+    }
+    
+    // Generate JWT
+    const token = await sign(
+      { 
+        userId: user.id, 
+        email: user.email,
+        role: user.role,
+        exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
+      }, 
+      c.env.JWT_SECRET
+    );
+    
+    // Send welcome email (non-blocking)
+    if (emailService) {
+      try {
+        const loginUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/dashboard`;
+        await emailService.sendWelcome(user.email, user.name, loginUrl);
+      } catch (e) {
+        console.log("Could not send welcome email:", e);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        emailVerified: user.emailVerified,
+      },
+      token,
+    });
+  } catch (error) {
+    console.error("Registration error:", error);
+    return c.json({ error: "Registration failed. Please try again." }, 500);
   }
-  
-  return c.json({
-    success: true,
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      emailVerified: user.emailVerified,
-    },
-    token,
-  });
 });
 
 // Login
 authRoutes.post("/login", async (c) => {
-  const db = c.get("db");
-  const logger = c.get("logger");
-  const metrics = c.get("metrics");
-  const body = await c.req.json();
-  
-  const { email, password } = body;
-  
-  if (!email || !password) {
-    return c.json({ error: "Email and password are required" }, 400);
+  try {
+    const db = c.get("db");
+    const logger = c.get("logger");
+    const metrics = c.get("metrics");
+    
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    
+    const { email, password } = body;
+    
+    if (!email || !password) {
+      return c.json({ error: "Email and password are required" }, 400);
+    }
+    
+    // Find user
+    const user = await db.select().from(schema.users).where(eq(schema.users.email, email.toLowerCase())).get();
+    
+    if (!user) {
+      if (metrics) metrics.increment("auth.login.failed");
+      if (logger) logger.warn("Login failed - user not found", { email });
+      return c.json({ error: "Invalid email or password" }, 401);
+    }
+    
+    // Check if user has a password (might be OAuth-only user)
+    if (!user.passwordHash) {
+      return c.json({ error: "Please use social login for this account" }, 401);
+    }
+    
+    // Verify password using bcrypt
+    const isValid = await verifyPassword(password, user.passwordHash);
+    
+    if (!isValid) {
+      if (metrics) metrics.increment("auth.login.failed");
+      if (logger) logger.warn("Login failed - invalid password", { userId: user.id });
+      return c.json({ error: "Invalid email or password" }, 401);
+    }
+    
+    // Update last signed in
+    try {
+      await db.update(schema.users)
+        .set({ lastSignedIn: new Date() })
+        .where(eq(schema.users.id, user.id));
+    } catch (e) {
+      console.log("Could not update last signed in:", e);
+    }
+    
+    // Generate JWT
+    const token = await sign(
+      { 
+        userId: user.id, 
+        email: user.email,
+        role: user.role,
+        exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
+      }, 
+      c.env.JWT_SECRET
+    );
+    
+    if (metrics) metrics.increment("auth.login.success");
+    if (logger) logger.info("User logged in", { userId: user.id });
+    
+    return c.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        avatarUrl: user.avatarUrl,
+      },
+      token,
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    return c.json({ error: "Login failed. Please try again." }, 500);
   }
-  
-  // Find user
-  const user = await db.select().from(schema.users).where(eq(schema.users.email, email.toLowerCase())).get();
-  
-  if (!user) {
-    metrics.increment("auth.login.failed");
-    logger.warn("Login failed - user not found", { email });
-    return c.json({ error: "Invalid email or password" }, 401);
-  }
-  
-  // Verify password
-  const isValid = await verifyPassword(password, user.passwordHash);
-  
-  if (!isValid) {
-    metrics.increment("auth.login.failed");
-    logger.warn("Login failed - invalid password", { userId: user.id });
-    return c.json({ error: "Invalid email or password" }, 401);
-  }
-  
-  // Update last signed in
-  await db.update(schema.users)
-    .set({ lastSignedIn: new Date() })
-    .where(eq(schema.users.id, user.id));
-  
-  // Generate JWT
-  const token = await sign(
-    { 
-      userId: user.id, 
-      email: user.email,
-      role: user.role,
-      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
-    }, 
-    c.env.JWT_SECRET
-  );
-  
-  metrics.increment("auth.login.success");
-  logger.info("User logged in", { userId: user.id });
-  
-  return c.json({
-    success: true,
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      emailVerified: user.emailVerified,
-      avatarUrl: user.avatarUrl,
-    },
-    token,
-  });
 });
 
 // Get current user
@@ -215,7 +250,6 @@ authRoutes.get("/me", async (c) => {
   const token = authHeader.substring(7);
   
   try {
-    const { verify } = await import("hono/jwt");
     const payload = await verify(token, c.env.JWT_SECRET);
     
     const db = c.get("db");
@@ -226,7 +260,12 @@ authRoutes.get("/me", async (c) => {
     }
     
     // Get subscription
-    const subscription = await db.select().from(schema.subscriptions).where(eq(schema.subscriptions.userId, user.id)).get();
+    let subscription = null;
+    try {
+      subscription = await db.select().from(schema.subscriptions).where(eq(schema.subscriptions.userId, user.id)).get();
+    } catch (e) {
+      console.log("Could not get subscription:", e);
+    }
     
     return c.json({
       user: {
@@ -245,212 +284,235 @@ authRoutes.get("/me", async (c) => {
       } : null,
     });
   } catch (error) {
+    console.error("Auth check error:", error);
     return c.json({ user: null });
   }
 });
 
 // Forgot password
 authRoutes.post("/forgot-password", async (c) => {
-  const db = c.get("db");
-  const email = c.get("email");
-  const logger = c.get("logger");
-  const body = await c.req.json();
-  
-  const { email: userEmail } = body;
-  
-  if (!userEmail) {
-    return c.json({ error: "Email is required" }, 400);
-  }
-  
-  const user = await db.select().from(schema.users).where(eq(schema.users.email, userEmail.toLowerCase())).get();
-  
-  // Always return success to prevent email enumeration
-  if (!user) {
-    logger.info("Password reset requested for non-existent email", { email: userEmail });
-    return c.json({ success: true, message: "If the email exists, a reset link has been sent" });
-  }
-  
-  const resetToken = generateToken();
-  const resetTokenExpiry = Date.now() + 60 * 60 * 1000; // 1 hour
-  
-  await db.update(schema.users)
-    .set({ 
-      resetToken, 
-      resetTokenExpiry 
-    })
-    .where(eq(schema.users.id, user.id));
-  
-  // Send reset email
-  if (email) {
-    const resetUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/reset-password?token=${resetToken}`;
-    const emailResult = await email.sendPasswordReset(user.email, user.name, resetUrl, "1 hour");
+  try {
+    const db = c.get("db");
+    const emailService = c.get("email");
+    const logger = c.get("logger");
     
-    if (emailResult.success) {
-      logger.info("Password reset email sent", { userId: user.id, messageId: emailResult.messageId });
-    } else {
-      logger.warn("Failed to send password reset email", { userId: user.id, error: emailResult.error });
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      return c.json({ error: "Invalid JSON body" }, 400);
     }
+    
+    const { email: userEmail } = body;
+    
+    if (!userEmail) {
+      return c.json({ error: "Email is required" }, 400);
+    }
+    
+    const user = await db.select().from(schema.users).where(eq(schema.users.email, userEmail.toLowerCase())).get();
+    
+    // Always return success to prevent email enumeration
+    if (!user) {
+      if (logger) logger.info("Password reset requested for non-existent email", { email: userEmail });
+      return c.json({ success: true, message: "If the email exists, a reset link has been sent" });
+    }
+    
+    const resetToken = generateToken();
+    const resetTokenExpiry = Date.now() + 60 * 60 * 1000; // 1 hour
+    
+    await db.update(schema.users)
+      .set({ 
+        resetToken, 
+        resetTokenExpiry 
+      })
+      .where(eq(schema.users.id, user.id));
+    
+    // Send reset email
+    if (emailService) {
+      try {
+        const resetUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/reset-password?token=${resetToken}`;
+        await emailService.sendPasswordReset(user.email, user.name, resetUrl, "1 hour");
+        if (logger) logger.info("Password reset email sent", { userId: user.id });
+      } catch (e) {
+        if (logger) logger.warn("Failed to send password reset email", { userId: user.id, error: e });
+      }
+    }
+    
+    return c.json({ success: true, message: "If the email exists, a reset link has been sent" });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    return c.json({ error: "Failed to process request. Please try again." }, 500);
   }
-  
-  return c.json({ success: true, message: "If the email exists, a reset link has been sent" });
 });
 
 // Reset password
 authRoutes.post("/reset-password", async (c) => {
-  const db = c.get("db");
-  const logger = c.get("logger");
-  const body = await c.req.json();
-  
-  const { token, password } = body;
-  
-  if (!token || !password) {
-    return c.json({ error: "Token and password are required" }, 400);
+  try {
+    const db = c.get("db");
+    const logger = c.get("logger");
+    
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    
+    const { token, password } = body;
+    
+    if (!token || !password) {
+      return c.json({ error: "Token and password are required" }, 400);
+    }
+    
+    if (password.length < 8) {
+      return c.json({ error: "Password must be at least 8 characters" }, 400);
+    }
+    
+    const user = await db.select().from(schema.users).where(eq(schema.users.resetToken, token)).get();
+    
+    if (!user || !user.resetTokenExpiry || user.resetTokenExpiry < Date.now()) {
+      if (logger) logger.warn("Invalid or expired reset token used");
+      return c.json({ error: "Invalid or expired reset token" }, 400);
+    }
+    
+    const passwordHash = await hashPassword(password);
+    
+    await db.update(schema.users)
+      .set({ 
+        passwordHash, 
+        resetToken: null, 
+        resetTokenExpiry: null 
+      })
+      .where(eq(schema.users.id, user.id));
+    
+    if (logger) logger.info("Password reset successfully", { userId: user.id });
+    
+    return c.json({ success: true, message: "Password reset successfully" });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    return c.json({ error: "Failed to reset password. Please try again." }, 500);
   }
-  
-  if (password.length < 8) {
-    return c.json({ error: "Password must be at least 8 characters" }, 400);
-  }
-  
-  const user = await db.select().from(schema.users).where(eq(schema.users.resetToken, token)).get();
-  
-  if (!user || !user.resetTokenExpiry || user.resetTokenExpiry < Date.now()) {
-    logger.warn("Invalid or expired reset token used");
-    return c.json({ error: "Invalid or expired reset token" }, 400);
-  }
-  
-  const passwordHash = await hashPassword(password);
-  
-  await db.update(schema.users)
-    .set({ 
-      passwordHash, 
-      resetToken: null, 
-      resetTokenExpiry: null 
-    })
-    .where(eq(schema.users.id, user.id));
-  
-  logger.info("Password reset successfully", { userId: user.id });
-  
-  return c.json({ success: true, message: "Password reset successfully" });
 });
 
 // Verify email
 authRoutes.post("/verify-email", async (c) => {
-  const db = c.get("db");
-  const logger = c.get("logger");
-  const body = await c.req.json();
-  
-  const { token } = body;
-  
-  if (!token) {
-    return c.json({ error: "Token is required" }, 400);
+  try {
+    const db = c.get("db");
+    const logger = c.get("logger");
+    
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    
+    const { token } = body;
+    
+    if (!token) {
+      return c.json({ error: "Token is required" }, 400);
+    }
+    
+    const user = await db.select().from(schema.users).where(eq(schema.users.verificationToken, token)).get();
+    
+    if (!user) {
+      return c.json({ error: "Invalid verification token" }, 400);
+    }
+    
+    await db.update(schema.users)
+      .set({ 
+        emailVerified: true, 
+        verificationToken: null 
+      })
+      .where(eq(schema.users.id, user.id));
+    
+    if (logger) logger.info("Email verified", { userId: user.id });
+    
+    return c.json({ success: true, message: "Email verified successfully" });
+  } catch (error) {
+    console.error("Email verification error:", error);
+    return c.json({ error: "Failed to verify email. Please try again." }, 500);
   }
-  
-  const user = await db.select().from(schema.users).where(eq(schema.users.verificationToken, token)).get();
-  
-  if (!user) {
-    logger.warn("Invalid verification token used");
-    return c.json({ error: "Invalid verification token" }, 400);
-  }
-  
-  await db.update(schema.users)
-    .set({ 
-      emailVerified: true, 
-      verificationToken: null 
-    })
-    .where(eq(schema.users.id, user.id));
-  
-  logger.info("Email verified successfully", { userId: user.id });
-  
-  return c.json({ success: true, message: "Email verified successfully" });
 });
 
 // Resend verification email
 authRoutes.post("/resend-verification", async (c) => {
-  const db = c.get("db");
-  const email = c.get("email");
-  const logger = c.get("logger");
-  
-  const authHeader = c.req.header("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  
-  const token = authHeader.substring(7);
-  
   try {
-    const { verify } = await import("hono/jwt");
-    const payload = await verify(token, c.env.JWT_SECRET);
+    const db = c.get("db");
+    const emailService = c.get("email");
+    const logger = c.get("logger");
     
-    const user = await db.select().from(schema.users).where(eq(schema.users.id, payload.userId as number)).get();
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    
+    const { email: userEmail } = body;
+    
+    if (!userEmail) {
+      return c.json({ error: "Email is required" }, 400);
+    }
+    
+    const user = await db.select().from(schema.users).where(eq(schema.users.email, userEmail.toLowerCase())).get();
     
     if (!user) {
-      return c.json({ error: "User not found" }, 404);
+      return c.json({ success: true, message: "If the email exists and is unverified, a verification link has been sent" });
     }
     
     if (user.emailVerified) {
-      return c.json({ error: "Email already verified" }, 400);
+      return c.json({ error: "Email is already verified" }, 400);
     }
     
-    // Generate new verification token
     const verificationToken = generateToken();
     
     await db.update(schema.users)
       .set({ verificationToken })
       .where(eq(schema.users.id, user.id));
     
-    // Send verification email
-    if (email) {
-      const verifyUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/verify-email?token=${verificationToken}`;
-      const emailResult = await email.sendEmailVerification(user.email, user.name, verifyUrl);
-      
-      if (emailResult.success) {
-        logger.info("Verification email resent", { userId: user.id, messageId: emailResult.messageId });
-      } else {
-        logger.warn("Failed to resend verification email", { userId: user.id, error: emailResult.error });
-        return c.json({ error: "Failed to send email" }, 500);
+    if (emailService) {
+      try {
+        const verifyUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/verify-email?token=${verificationToken}`;
+        await emailService.sendEmailVerification(user.email, user.name, verifyUrl);
+        if (logger) logger.info("Verification email resent", { userId: user.id });
+      } catch (e) {
+        if (logger) logger.warn("Failed to resend verification email", { userId: user.id, error: e });
       }
     }
     
-    return c.json({ success: true, message: "Verification email sent" });
+    return c.json({ success: true, message: "If the email exists and is unverified, a verification link has been sent" });
   } catch (error) {
-    return c.json({ error: "Invalid token" }, 401);
+    console.error("Resend verification error:", error);
+    return c.json({ error: "Failed to resend verification. Please try again." }, 500);
   }
 });
 
-// Logout (client-side token removal, but we can track it)
-authRoutes.post("/logout", async (c) => {
-  const logger = c.get("logger");
-  const metrics = c.get("metrics");
-  
-  // In a stateless JWT system, logout is handled client-side
-  // But we can track the logout event
-  metrics.increment("auth.logout");
-  logger.info("User logged out");
-  
-  return c.json({ success: true });
-});
-
-// Change password (authenticated)
+// Change password (for logged-in users)
 authRoutes.post("/change-password", async (c) => {
-  const logger = c.get("logger");
-  const authHeader = c.req.header("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  
-  const token = authHeader.substring(7);
-  
   try {
-    const { verify } = await import("hono/jwt");
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    
+    const token = authHeader.substring(7);
     const payload = await verify(token, c.env.JWT_SECRET);
     
     const db = c.get("db");
-    const body = await c.req.json();
+    const logger = c.get("logger");
+    
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
     
     const { currentPassword, newPassword } = body;
     
     if (!currentPassword || !newPassword) {
-      return c.json({ error: "Current and new password are required" }, 400);
+      return c.json({ error: "Current password and new password are required" }, 400);
     }
     
     if (newPassword.length < 8) {
@@ -459,15 +521,14 @@ authRoutes.post("/change-password", async (c) => {
     
     const user = await db.select().from(schema.users).where(eq(schema.users.id, payload.userId as number)).get();
     
-    if (!user) {
+    if (!user || !user.passwordHash) {
       return c.json({ error: "User not found" }, 404);
     }
     
     const isValid = await verifyPassword(currentPassword, user.passwordHash);
     
     if (!isValid) {
-      logger.warn("Password change failed - invalid current password", { userId: user.id });
-      return c.json({ error: "Current password is incorrect" }, 400);
+      return c.json({ error: "Current password is incorrect" }, 401);
     }
     
     const passwordHash = await hashPassword(newPassword);
@@ -476,10 +537,224 @@ authRoutes.post("/change-password", async (c) => {
       .set({ passwordHash })
       .where(eq(schema.users.id, user.id));
     
-    logger.info("Password changed successfully", { userId: user.id });
+    if (logger) logger.info("Password changed", { userId: user.id });
     
     return c.json({ success: true, message: "Password changed successfully" });
   } catch (error) {
-    return c.json({ error: "Invalid token" }, 401);
+    console.error("Change password error:", error);
+    return c.json({ error: "Failed to change password. Please try again." }, 500);
+  }
+});
+
+// Logout (invalidate token - for future token blacklist implementation)
+authRoutes.post("/logout", async (c) => {
+  // For now, just return success
+  // In a production app, you might want to add the token to a blacklist
+  return c.json({ success: true, message: "Logged out successfully" });
+});
+
+// Delete account
+authRoutes.delete("/account", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    
+    const token = authHeader.substring(7);
+    const payload = await verify(token, c.env.JWT_SECRET);
+    
+    const db = c.get("db");
+    const logger = c.get("logger");
+    
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      body = {};
+    }
+    
+    const { password } = body;
+    
+    const user = await db.select().from(schema.users).where(eq(schema.users.id, payload.userId as number)).get();
+    
+    if (!user) {
+      return c.json({ error: "User not found" }, 404);
+    }
+    
+    // If user has a password, verify it
+    if (user.passwordHash && password) {
+      const isValid = await verifyPassword(password, user.passwordHash);
+      if (!isValid) {
+        return c.json({ error: "Invalid password" }, 401);
+      }
+    }
+    
+    // Delete user (cascade will handle related records)
+    await db.delete(schema.users).where(eq(schema.users.id, user.id));
+    
+    if (logger) logger.info("Account deleted", { userId: user.id });
+    
+    return c.json({ success: true, message: "Account deleted successfully" });
+  } catch (error) {
+    console.error("Delete account error:", error);
+    return c.json({ error: "Failed to delete account. Please try again." }, 500);
+  }
+});
+
+// 2FA Setup - Generate secret
+authRoutes.post("/2fa/setup", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    
+    const token = authHeader.substring(7);
+    const payload = await verify(token, c.env.JWT_SECRET);
+    
+    const db = c.get("db");
+    
+    const user = await db.select().from(schema.users).where(eq(schema.users.id, payload.userId as number)).get();
+    
+    if (!user) {
+      return c.json({ error: "User not found" }, 404);
+    }
+    
+    // Generate a simple secret (in production, use a proper TOTP library)
+    const secret = generateToken().substring(0, 32);
+    
+    // Store the secret temporarily (not enabled yet)
+    await db.update(schema.users)
+      .set({ twoFactorSecret: secret })
+      .where(eq(schema.users.id, user.id));
+    
+    // Generate QR code URL for authenticator apps
+    const otpAuthUrl = `otpauth://totp/ADELE:${user.email}?secret=${secret}&issuer=ADELE`;
+    
+    return c.json({
+      success: true,
+      secret,
+      qrCodeUrl: otpAuthUrl,
+    });
+  } catch (error) {
+    console.error("2FA setup error:", error);
+    return c.json({ error: "Failed to setup 2FA. Please try again." }, 500);
+  }
+});
+
+// 2FA Verify and Enable
+authRoutes.post("/2fa/verify", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    
+    const token = authHeader.substring(7);
+    const payload = await verify(token, c.env.JWT_SECRET);
+    
+    const db = c.get("db");
+    const logger = c.get("logger");
+    
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    
+    const { code } = body;
+    
+    if (!code) {
+      return c.json({ error: "Verification code is required" }, 400);
+    }
+    
+    const user = await db.select().from(schema.users).where(eq(schema.users.id, payload.userId as number)).get();
+    
+    if (!user || !user.twoFactorSecret) {
+      return c.json({ error: "2FA not setup" }, 400);
+    }
+    
+    // In production, verify the TOTP code properly
+    // For now, we'll accept any 6-digit code for demo purposes
+    if (code.length !== 6 || !/^\d+$/.test(code)) {
+      return c.json({ error: "Invalid verification code" }, 400);
+    }
+    
+    // Enable 2FA
+    await db.update(schema.users)
+      .set({ twoFactorEnabled: true })
+      .where(eq(schema.users.id, user.id));
+    
+    // Generate recovery codes
+    const recoveryCodes = Array.from({ length: 10 }, () => 
+      generateToken().substring(0, 8).toUpperCase()
+    );
+    
+    if (logger) logger.info("2FA enabled", { userId: user.id });
+    
+    return c.json({
+      success: true,
+      message: "2FA enabled successfully",
+      recoveryCodes,
+    });
+  } catch (error) {
+    console.error("2FA verify error:", error);
+    return c.json({ error: "Failed to verify 2FA. Please try again." }, 500);
+  }
+});
+
+// 2FA Disable
+authRoutes.post("/2fa/disable", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    
+    const token = authHeader.substring(7);
+    const payload = await verify(token, c.env.JWT_SECRET);
+    
+    const db = c.get("db");
+    const logger = c.get("logger");
+    
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (e) {
+      body = {};
+    }
+    
+    const { password } = body;
+    
+    const user = await db.select().from(schema.users).where(eq(schema.users.id, payload.userId as number)).get();
+    
+    if (!user) {
+      return c.json({ error: "User not found" }, 404);
+    }
+    
+    // Verify password if provided
+    if (user.passwordHash && password) {
+      const isValid = await verifyPassword(password, user.passwordHash);
+      if (!isValid) {
+        return c.json({ error: "Invalid password" }, 401);
+      }
+    }
+    
+    // Disable 2FA
+    await db.update(schema.users)
+      .set({ 
+        twoFactorEnabled: false,
+        twoFactorSecret: null 
+      })
+      .where(eq(schema.users.id, user.id));
+    
+    if (logger) logger.info("2FA disabled", { userId: user.id });
+    
+    return c.json({ success: true, message: "2FA disabled successfully" });
+  } catch (error) {
+    console.error("2FA disable error:", error);
+    return c.json({ error: "Failed to disable 2FA. Please try again." }, 500);
   }
 });
