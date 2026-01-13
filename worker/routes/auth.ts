@@ -94,18 +94,16 @@ authRoutes.post("/register", async (c) => {
       return c.json({ error: "Email already registered" }, 400);
     }
     
-    // Hash password using bcrypt
+    // Hash password using SHA-256 (matching existing database format)
     const passwordHash = await hashPassword(password);
-    const verificationToken = generateToken();
     
-    // Create user
+    // Create user - only use columns that exist in the actual database
+    // Actual columns: id, email, password, name, role, phone, company, position, face_embedding, voice_embedding, created_at, updated_at
     const result = await db.insert(schema.users).values({
       email: userEmail.toLowerCase(),
       passwordHash,
       name,
-      verificationToken,
       role: "user",
-      emailVerified: false,
     }).returning();
     
     const user = result[0];
@@ -114,58 +112,16 @@ authRoutes.post("/register", async (c) => {
       logger.info("User registered", { userId: user.id, email: user.email });
     }
     
-    // Create default settings (with error handling)
-    try {
-      await db.insert(schema.userSettings).values({
-        userId: user.id,
-      });
-    } catch (e) {
-      console.log("Could not create user settings:", e);
-    }
-    
-    // Create free subscription (with error handling)
-    try {
-      await db.insert(schema.subscriptions).values({
-        userId: user.id,
-        plan: "free",
-        status: "active",
-      });
-    } catch (e) {
-      console.log("Could not create subscription:", e);
-    }
-    
-    // Create onboarding progress (with error handling)
-    try {
-      await db.insert(schema.onboardingProgress).values({
-        userId: user.id,
-        currentStep: 0,
-        completedSteps: JSON.stringify([]),
-        isCompleted: false,
-      });
-    } catch (e) {
-      console.log("Could not create onboarding progress:", e);
-    }
-    
     // Generate JWT
     const token = await sign(
       { 
         userId: user.id, 
         email: user.email,
-        role: user.role,
+        role: user.role || "user",
         exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
       }, 
       c.env.JWT_SECRET
     );
-    
-    // Send welcome email (non-blocking)
-    if (emailService) {
-      try {
-        const loginUrl = `${c.env.APP_URL || 'https://adele.ayonix.com'}/dashboard`;
-        await emailService.sendWelcome(user.email, user.name, loginUrl);
-      } catch (e) {
-        console.log("Could not send welcome email:", e);
-      }
-    }
     
     return c.json({
       success: true,
@@ -173,8 +129,7 @@ authRoutes.post("/register", async (c) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role,
-        emailVerified: user.emailVerified,
+        role: user.role || "user",
       },
       token,
     });
