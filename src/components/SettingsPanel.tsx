@@ -278,23 +278,19 @@ export default function SettingsPanel({
   useEffect(() => {
     const applyTheme = (theme: 'light' | 'dark' | 'system') => {
       const root = document.documentElement;
-      const body = document.body;
       
       let effectiveTheme: 'light' | 'dark' = theme === 'system' 
         ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
         : theme;
       
-      if (effectiveTheme === 'light') {
-        root.classList.remove('dark');
-        root.classList.add('light');
-        body.style.backgroundColor = '#ffffff';
-        body.style.color = '#1f2937';
-      } else {
-        root.classList.remove('light');
+      // Remove both classes first
+      root.classList.remove('dark', 'light');
+      
+      // Add the appropriate class
+      if (effectiveTheme === 'dark') {
         root.classList.add('dark');
-        body.style.backgroundColor = '#09090b';
-        body.style.color = '#fafafa';
       }
+      // For light mode, we don't add any class - Tailwind uses :root styles
       
       // Save to localStorage
       localStorage.setItem('adele-theme', theme);
