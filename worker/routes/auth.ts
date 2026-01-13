@@ -190,39 +190,43 @@ authRoutes.post("/login", async (c) => {
       return c.json({ error: "Invalid email or password" }, 401);
     }
     
-    // Update last signed in (using updated_at since last_signed_in doesn't exist)
+    // Skip updating last signed in - column doesn't exist
+    // Just log the successful authentication
+    console.log("Authentication successful for user:", user.id);
+    
+    // Generate JWT - ensure all values are defined
+    console.log("Generating JWT with userId:", user.id, "email:", user.email, "role:", user.role);
+    const jwtPayload = { 
+      userId: user.id, 
+      email: user.email,
+      role: String(user.role || "user"),
+      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
+    };
+    console.log("JWT payload:", JSON.stringify(jwtPayload));
+    
+    let token: string;
     try {
-      await db.update(schema.users)
-        .set({ updatedAt: new Date().toISOString() })
-        .where(eq(schema.users.id, user.id));
-    } catch (e) {
-      console.log("Could not update last signed in:", e);
+      token = await sign(jwtPayload, c.env.JWT_SECRET);
+      console.log("JWT generated successfully");
+    } catch (jwtError) {
+      console.error("JWT generation error:", jwtError);
+      throw jwtError;
     }
     
-    // Generate JWT
-    const token = await sign(
-      { 
-        userId: user.id, 
-        email: user.email,
-        role: user.role || "user",
-        exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
-      }, 
-      c.env.JWT_SECRET
-    );
-    
-    if (metrics) metrics.increment("auth.login.success");
-    if (logger) logger.info("User logged in", { userId: user.id });
-    
-    return c.json({
+    console.log("Preparing response...");
+    const response = {
       success: true,
       user: {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role || "user",
+        role: String(user.role || "user"),
       },
       token,
-    });
+    };
+    console.log("Response prepared, returning...");
+    
+    return c.json(response);
   } catch (error) {
     console.error("Login error:", error);
     return c.json({ error: "Login failed. Please try again." }, 500);
