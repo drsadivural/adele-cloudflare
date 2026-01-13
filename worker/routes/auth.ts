@@ -7,22 +7,41 @@ import type { Env, Variables } from "../index";
 
 export const authRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// Password hashing using bcryptjs (compatible with existing bcrypt hashes)
-async function hashPassword(password: string): Promise<string> {
-  const salt = await bcrypt.genSalt(12);
-  return bcrypt.hash(password, salt);
+// SHA-256 hash function for password hashing
+async function hashPasswordSHA256(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function verifyPassword(password: string, hash: string): Promise<boolean> {
+// Password hashing - use SHA-256 to match existing database format
+async function hashPassword(password: string): Promise<string> {
+  return hashPasswordSHA256(password);
+}
+
+async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
   try {
     console.log("verifyPassword called");
     console.log("Password length:", password.length);
-    console.log("Hash length:", hash.length);
-    console.log("Hash starts with:", hash.substring(0, 7));
+    console.log("Hash length:", storedHash.length);
+    console.log("Hash starts with:", storedHash.substring(0, 7));
     
-    // bcryptjs.compare returns a promise
-    const result = bcrypt.compareSync(password, hash);
-    console.log("bcrypt.compareSync result:", result);
+    // Check if it's a bcrypt hash (starts with $2a$, $2b$, or $2y$)
+    if (storedHash.startsWith("$2")) {
+      console.log("Detected bcrypt hash, using bcrypt.compareSync");
+      const result = bcrypt.compareSync(password, storedHash);
+      console.log("bcrypt.compareSync result:", result);
+      return result;
+    }
+    
+    // Otherwise, assume SHA-256 hash (64 hex characters)
+    console.log("Detected SHA-256 hash, using crypto.subtle");
+    const computedHash = await hashPasswordSHA256(password);
+    console.log("Computed SHA-256 hash:", computedHash);
+    const result = computedHash === storedHash;
+    console.log("SHA-256 comparison result:", result);
     return result;
   } catch (error) {
     console.error("Password verification error:", error);
