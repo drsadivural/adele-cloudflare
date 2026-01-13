@@ -120,11 +120,31 @@ export default function SettingsPanel({
   user,
   onLogout
 }: SettingsPanelProps) {
-  // Settings state
-  const [language, setLanguage] = useState('English');
-  const [appearance, setAppearance] = useState<'light' | 'dark' | 'system'>('dark');
-  const [receiveContent, setReceiveContent] = useState(true);
-  const [emailOnTask, setEmailOnTask] = useState(true);
+  // Settings state - load from localStorage
+  const [language, setLanguage] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('adele-language') || 'English';
+    }
+    return 'English';
+  });
+  const [appearance, setAppearance] = useState<'light' | 'dark' | 'system'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('adele-theme') as 'light' | 'dark' | 'system') || 'dark';
+    }
+    return 'dark';
+  });
+  const [receiveContent, setReceiveContent] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('adele-receive-content') !== 'false';
+    }
+    return true;
+  });
+  const [emailOnTask, setEmailOnTask] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('adele-email-on-task') !== 'false';
+    }
+    return true;
+  });
   
   // Account state
   const [profileName, setProfileName] = useState(user?.name || '');
@@ -250,6 +270,59 @@ export default function SettingsPanel({
       setProfilePhone(user.phone || '');
     }
   }, [user]);
+
+  // Track if this is the initial mount
+  const [isInitialMount, setIsInitialMount] = useState(true);
+
+  // Apply theme when appearance changes
+  useEffect(() => {
+    const applyTheme = (theme: 'light' | 'dark' | 'system') => {
+      const root = document.documentElement;
+      const body = document.body;
+      
+      let effectiveTheme: 'light' | 'dark' = theme === 'system' 
+        ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : theme;
+      
+      if (effectiveTheme === 'light') {
+        root.classList.remove('dark');
+        root.classList.add('light');
+        body.style.backgroundColor = '#ffffff';
+        body.style.color = '#1f2937';
+      } else {
+        root.classList.remove('light');
+        root.classList.add('dark');
+        body.style.backgroundColor = '#09090b';
+        body.style.color = '#fafafa';
+      }
+      
+      // Save to localStorage
+      localStorage.setItem('adele-theme', theme);
+    };
+    
+    applyTheme(appearance);
+    
+    // Only show toast after initial mount
+    if (!isInitialMount) {
+      toast.success(`Theme changed to ${appearance}`);
+    } else {
+      setIsInitialMount(false);
+    }
+  }, [appearance]);
+
+  // Save language preference
+  useEffect(() => {
+    localStorage.setItem('adele-language', language);
+  }, [language]);
+
+  // Save notification preferences
+  useEffect(() => {
+    localStorage.setItem('adele-receive-content', String(receiveContent));
+  }, [receiveContent]);
+
+  useEffect(() => {
+    localStorage.setItem('adele-email-on-task', String(emailOnTask));
+  }, [emailOnTask]);
 
   if (!isOpen) return null;
 
