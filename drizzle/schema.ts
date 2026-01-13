@@ -1005,3 +1005,125 @@ export type DataExport = typeof dataExports.$inferSelect;
 export type DeletionRequest = typeof deletionRequests.$inferSelect;
 export type RetentionSetting = typeof retentionSettings.$inferSelect;
 export type InstalledIntegration = typeof installedIntegrations.$inferSelect;
+
+
+// ============================================
+// MAIL ADELE (Email Agent)
+// ============================================
+
+export const emailAgentSettings = sqliteTable("email_agent_settings", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }).unique(),
+  enabled: integer("enabled", { mode: "boolean" }).default(false),
+  autoReply: integer("auto_reply", { mode: "boolean" }).default(false),
+  autoReplyDelay: integer("auto_reply_delay").default(5), // minutes
+  summarize: integer("summarize", { mode: "boolean" }).default(true),
+  categorize: integer("categorize", { mode: "boolean" }).default(true),
+  prioritize: integer("prioritize", { mode: "boolean" }).default(true),
+  workingHours: text("working_hours"), // JSON { start: "09:00", end: "17:00", timezone: "UTC", days: [1,2,3,4,5] }
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+export const emailAgentRules = sqliteTable("email_agent_rules", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  trigger: text("trigger").notNull(), // "new_email", "reply_received", "schedule"
+  conditions: text("conditions"), // JSON { from: "...", subject_contains: "...", etc }
+  action: text("action").notNull(), // "auto_reply", "forward", "label", "archive", "draft"
+  actionConfig: text("action_config"), // JSON with action-specific config
+  enabled: integer("enabled", { mode: "boolean" }).default(true),
+  priority: integer("priority").default(0),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+export const emailAccounts = sqliteTable("email_accounts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  provider: text("provider").notNull(), // "google", "microsoft", "imap"
+  status: text("status").default("pending"), // "pending", "connected", "error"
+  accessToken: text("access_token"), // Encrypted
+  refreshToken: text("refresh_token"), // Encrypted
+  tokenExpiresAt: integer("token_expires_at", { mode: "timestamp" }),
+  lastSyncAt: integer("last_sync_at", { mode: "timestamp" }),
+  syncCursor: text("sync_cursor"), // For incremental sync
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+export const emailsExtended = sqliteTable("emails_extended", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  accountId: integer("account_id").references(() => emailAccounts.id, { onDelete: "cascade" }),
+  messageId: text("message_id"),
+  threadId: text("thread_id"),
+  fromAddress: text("from_address"),
+  toAddresses: text("to_addresses"), // JSON array
+  ccAddresses: text("cc_addresses"), // JSON array
+  subject: text("subject"),
+  body: text("body"),
+  htmlBody: text("html_body"),
+  folder: text("folder").default("inbox"),
+  isRead: integer("is_read", { mode: "boolean" }).default(false),
+  isStarred: integer("is_starred", { mode: "boolean" }).default(false),
+  hasAttachments: integer("has_attachments", { mode: "boolean" }).default(false),
+  receivedAt: integer("received_at", { mode: "timestamp" }),
+  agentProcessed: integer("agent_processed", { mode: "boolean" }).default(false),
+  agentSummary: text("agent_summary"),
+  agentDraft: text("agent_draft"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// ============================================
+// CLOUD BROWSER (Browser Sessions)
+// ============================================
+
+export const browserSessions = sqliteTable("browser_sessions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name"),
+  status: text("status").default("active"), // "active", "paused", "terminated"
+  resolution: text("resolution").default("1920x1080"),
+  currentUrl: text("current_url"),
+  profileId: integer("profile_id").references(() => browserProfiles.id),
+  screenshotUrl: text("screenshot_url"),
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+export const browserProfiles = sqliteTable("browser_profiles", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  userAgent: text("user_agent"),
+  viewport: text("viewport").default("1920x1080"),
+  locale: text("locale").default("en-US"),
+  timezone: text("timezone").default("UTC"),
+  isDefault: integer("is_default", { mode: "boolean" }).default(false),
+  cookies: text("cookies"), // Encrypted JSON
+  localStorage: text("local_storage"), // Encrypted JSON
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+export const browserHistory = sqliteTable("browser_history", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sessionId: integer("session_id").notNull().references(() => browserSessions.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  title: text("title"),
+  visitedAt: integer("visited_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// Additional type exports for new tables
+export type EmailAgentSetting = typeof emailAgentSettings.$inferSelect;
+export type EmailAgentRule = typeof emailAgentRules.$inferSelect;
+export type EmailAccount = typeof emailAccounts.$inferSelect;
+export type EmailExtended = typeof emailsExtended.$inferSelect;
+export type BrowserSession = typeof browserSessions.$inferSelect;
+export type BrowserProfile = typeof browserProfiles.$inferSelect;
+export type BrowserHistoryEntry = typeof browserHistory.$inferSelect;

@@ -330,6 +330,33 @@ integrations.delete("/:installationId", async (c) => {
   return c.json({ success: true });
 });
 
+// Toggle integration enabled/disabled
+integrations.post("/:installationId/toggle", async (c) => {
+  const user = c.get("user");
+  const db = c.get("db");
+  const installationId = parseInt(c.req.param("installationId"));
+  const { enabled } = await c.req.json();
+
+  if (!user) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  await db
+    .update(schema.installedIntegrations)
+    .set({
+      status: enabled ? "active" : "inactive",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.installedIntegrations.id, installationId),
+        eq(schema.installedIntegrations.userId, user.id)
+      )
+    );
+
+  return c.json({ success: true });
+});
+
 // Configure integration
 integrations.patch("/:installationId/config", async (c) => {
   const user = c.get("user");

@@ -24,6 +24,8 @@ import { voiceRoutes } from "./routes/voice";
 import { dataControlsRoutes } from "./routes/dataControls";
 import { integrationsRoutes } from "./routes/integrations";
 import { auditRoutes } from "./routes/audit";
+import { mailRoutes } from "./routes/mail";
+import { cloudBrowserRoutes } from "./routes/cloudBrowser";
 import { createEmailService, EmailService } from "./services/email";
 import { rateLimiters } from "./middleware/rateLimit";
 import { 
@@ -402,6 +404,8 @@ app.route("/api/voice", voiceRoutes);
 app.route("/api/data", dataControlsRoutes);
 app.route("/api/integrations", integrationsRoutes);
 app.route("/api/audit", auditRoutes);
+app.route("/api/mail", mailRoutes);
+app.route("/api/browser", cloudBrowserRoutes);
 
 // 404 handler
 app.notFound((c) => {
