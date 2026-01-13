@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
+import { admin } from '@/lib/api';
 import { toast } from 'sonner';
 import {
   ArrowLeft,
@@ -92,6 +93,8 @@ export default function AdminPanel() {
   const [showAddLLM, setShowAddLLM] = useState(false);
   const [showAddVoice, setShowAddVoice] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
 
   // New LLM form state
   const [newLLM, setNewLLM] = useState<Partial<LLMModel>>({
@@ -124,6 +127,25 @@ export default function AdminPanel() {
       setLocation('/dashboard');
     }
   }, [user, authLoading, setLocation]);
+
+  // Fetch users when Users tab is active
+  useEffect(() => {
+    async function fetchUsers() {
+      if (activeTab === 'users' && user?.role === 'admin') {
+        setLoadingUsers(true);
+        try {
+          const response = await admin.getUsers();
+          setUsers(response.users || []);
+        } catch (error) {
+          console.error('Failed to fetch users:', error);
+          toast.error('Failed to load users');
+        } finally {
+          setLoadingUsers(false);
+        }
+      }
+    }
+    fetchUsers();
+  }, [activeTab, user]);
 
   const handleAddLLM = () => {
     if (!newLLM.name || !newLLM.model) {
@@ -702,14 +724,65 @@ export default function AdminPanel() {
                   <p className="text-zinc-400 mt-1">Manage user accounts and permissions</p>
                 </div>
 
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                  <div className="flex items-center justify-center py-12 text-zinc-500">
-                    <div className="text-center">
-                      <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>User management coming soon</p>
-                      <p className="text-sm mt-1">View and manage all registered users</p>
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                  {loadingUsers ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
                     </div>
-                  </div>
+                  ) : users.length === 0 ? (
+                    <div className="flex items-center justify-center py-12 text-zinc-500">
+                      <div className="text-center">
+                        <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p>No users found</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead className="bg-zinc-800/50">
+                          <tr>
+                            <th className="text-left px-6 py-3 text-sm font-medium text-zinc-400">User</th>
+                            <th className="text-left px-6 py-3 text-sm font-medium text-zinc-400">Email</th>
+                            <th className="text-left px-6 py-3 text-sm font-medium text-zinc-400">Role</th>
+                            <th className="text-left px-6 py-3 text-sm font-medium text-zinc-400">Company</th>
+                            <th className="text-left px-6 py-3 text-sm font-medium text-zinc-400">Joined</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {users.map((u) => (
+                            <tr key={u.id} className="border-t border-zinc-800 hover:bg-zinc-800/30">
+                              <td className="px-6 py-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 bg-blue-500/20 rounded-full flex items-center justify-center">
+                                    <span className="text-sm font-medium text-blue-400">
+                                      {u.name?.[0]?.toUpperCase() || '?'}
+                                    </span>
+                                  </div>
+                                  <span className="font-medium">{u.name || 'Unknown'}</span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-zinc-400">{u.email}</td>
+                              <td className="px-6 py-4">
+                                <span
+                                  className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    u.role === 'admin'
+                                      ? 'bg-purple-500/20 text-purple-400'
+                                      : 'bg-zinc-700 text-zinc-300'
+                                  }`}
+                                >
+                                  {u.role}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-zinc-400">{u.company || '-'}</td>
+                              <td className="px-6 py-4 text-zinc-400">
+                                {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
