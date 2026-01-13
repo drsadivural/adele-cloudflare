@@ -89,9 +89,26 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 // Track server start time for uptime
 const startTime = Date.now();
 
-// CORS middleware
+// CORS middleware - allow Pages preview URLs and production domains
 app.use("*", cors({
-  origin: ["http://localhost:5173", "https://adele.ayonix.com", "https://www.adele.ayonix.com"],
+  origin: (origin) => {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return "https://adele.ayonix.com";
+    
+    // Allow localhost for development
+    if (origin.startsWith("http://localhost:")) return origin;
+    
+    // Allow all Cloudflare Pages preview URLs
+    if (origin.endsWith(".pages.dev")) return origin;
+    
+    // Allow production domains
+    if (origin === "https://adele.ayonix.com" || origin === "https://www.adele.ayonix.com") {
+      return origin;
+    }
+    
+    // Default to production domain
+    return "https://adele.ayonix.com";
+  },
   credentials: true,
   allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowHeaders: ["Content-Type", "Authorization", "X-Request-ID"],
