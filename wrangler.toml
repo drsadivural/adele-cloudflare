@@ -26,6 +26,9 @@ ENVIRONMENT = "production"
 APP_URL = "https://adele.ayonix.com"
 API_URL = "https://adele-api.ayonix.com"
 
+# Pages configuration
+pages_build_output_dir = "dist"
+
 [dev]
 port = 8787
 local_protocol = "http"
