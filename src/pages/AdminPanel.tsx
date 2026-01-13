@@ -14,12 +14,19 @@ import {
   Mic,
   Key,
   Server,
-  Settings,
   Users,
   Database,
   Shield,
   Check,
   AlertTriangle,
+  Edit2,
+  Lock,
+  Mail,
+  UserCog,
+  Eye,
+  EyeOff,
+  Copy,
+  RefreshCw,
 } from 'lucide-react';
 
 interface LLMModel {
@@ -43,12 +50,28 @@ interface VoiceModel {
   isActive: boolean;
 }
 
-interface APIConfig {
+interface APIKeyConfig {
   id: string;
   name: string;
-  type: string;
-  apiKey: string;
-  isActive: boolean;
+  key: string;
+  description: string;
+  value: string;
+  isConfigured: boolean;
+}
+
+interface User {
+  id: number;
+  email: string;
+  name: string;
+  role: string;
+  phone?: string;
+  company?: string;
+  position?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  emailVerified?: boolean;
+  avatarUrl?: string;
+  lastSignedIn?: string;
 }
 
 const defaultLLMs: LLMModel[] = [
@@ -89,12 +112,33 @@ export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState('llms');
   const [llmModels, setLlmModels] = useState<LLMModel[]>(defaultLLMs);
   const [voiceModels, setVoiceModels] = useState<VoiceModel[]>(defaultVoices);
-  const [apiConfigs] = useState<APIConfig[]>([]);
   const [showAddLLM, setShowAddLLM] = useState(false);
   const [showAddVoice, setShowAddVoice] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [users, setUsers] = useState<any[]>([]);
+  
+  // User management state
+  const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  
+  // API Keys state
+  const [apiKeys, setApiKeys] = useState<APIKeyConfig[]>([
+    { id: '1', name: 'OpenAI', key: 'OPENAI_API_KEY', description: 'For GPT models and embeddings', value: '', isConfigured: false },
+    { id: '2', name: 'Anthropic', key: 'ANTHROPIC_API_KEY', description: 'For Claude models', value: '', isConfigured: false },
+    { id: '3', name: 'ElevenLabs', key: 'ELEVENLABS_API_KEY', description: 'For text-to-speech', value: '', isConfigured: false },
+    { id: '4', name: 'Stripe', key: 'STRIPE_SECRET_KEY', description: 'For payment processing', value: '', isConfigured: false },
+    { id: '5', name: 'Resend', key: 'RESEND_API_KEY', description: 'For email notifications', value: '', isConfigured: false },
+    { id: '6', name: 'GitHub', key: 'GITHUB_CLIENT_SECRET', description: 'For OAuth and integrations', value: '', isConfigured: false },
+  ]);
+  const [editingApiKey, setEditingApiKey] = useState<string | null>(null);
+  const [showApiKeyValue, setShowApiKeyValue] = useState<Record<string, boolean>>({});
 
   // New LLM form state
   const [newLLM, setNewLLM] = useState<Partial<LLMModel>>({
@@ -121,7 +165,6 @@ export default function AdminPanel() {
     if (!authLoading && !user) {
       setLocation('/login');
     }
-    // Check if user is admin
     if (user && user.role !== 'admin') {
       toast.error('Access denied. Admin privileges required.');
       setLocation('/dashboard');
@@ -130,23 +173,179 @@ export default function AdminPanel() {
 
   // Fetch users when Users tab is active
   useEffect(() => {
-    async function fetchUsers() {
-      if (activeTab === 'users' && user?.role === 'admin') {
-        setLoadingUsers(true);
-        try {
-          const response = await admin.getUsers();
-          setUsers(response.users || []);
-        } catch (error) {
-          console.error('Failed to fetch users:', error);
-          toast.error('Failed to load users');
-        } finally {
-          setLoadingUsers(false);
-        }
-      }
+    if (activeTab === 'users' && user?.role === 'admin') {
+      fetchUsers();
     }
-    fetchUsers();
   }, [activeTab, user]);
 
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const response = await admin.getUsers();
+      setUsers(response.users || []);
+    } catch (error) {
+      console.error('Failed to fetch users:', error);
+      toast.error('Failed to load users');
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  // User Management Functions
+  const handleEditUser = (u: User) => {
+    setEditingUser({ ...u });
+    setShowEditModal(true);
+  };
+
+  const handleSaveUser = async () => {
+    if (!editingUser) return;
+    
+    try {
+      const response = await fetch(`https://adele-api.ayonix.com/api/admin/users/${editingUser.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({
+          name: editingUser.name,
+          email: editingUser.email,
+          role: editingUser.role,
+          phone: editingUser.phone,
+          company: editingUser.company,
+          position: editingUser.position,
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update user');
+      }
+      
+      toast.success('User updated successfully');
+      setShowEditModal(false);
+      setEditingUser(null);
+      fetchUsers();
+    } catch (error) {
+      toast.error('Failed to update user');
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!editingUser) return;
+    
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    
+    if (newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+    
+    try {
+      const response = await fetch(`https://adele-api.ayonix.com/api/admin/users/${editingUser.id}/password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ password: newPassword }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to change password');
+      }
+      
+      toast.success('Password changed successfully');
+      setShowPasswordModal(false);
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (error) {
+      toast.error('Failed to change password');
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    
+    try {
+      const response = await fetch(`https://adele-api.ayonix.com/api/admin/users/${userToDelete.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete user');
+      }
+      
+      toast.success('User deleted successfully');
+      setShowDeleteModal(false);
+      setUserToDelete(null);
+      fetchUsers();
+    } catch (error) {
+      toast.error('Failed to delete user');
+    }
+  };
+
+  const handleOpenPasswordModal = (u: User) => {
+    setEditingUser(u);
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowPasswordModal(true);
+  };
+
+  const handleOpenDeleteModal = (u: User) => {
+    setUserToDelete(u);
+    setShowDeleteModal(true);
+  };
+
+  // API Key Functions
+  const handleSaveApiKey = async (apiKey: APIKeyConfig) => {
+    try {
+      const response = await fetch(`https://adele-api.ayonix.com/api/admin/config/api-keys`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({
+          key: apiKey.key,
+          value: apiKey.value,
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to save API key');
+      }
+      
+      setApiKeys(apiKeys.map(k => 
+        k.id === apiKey.id ? { ...k, isConfigured: true } : k
+      ));
+      setEditingApiKey(null);
+      toast.success(`${apiKey.name} API key saved`);
+    } catch (error) {
+      toast.error('Failed to save API key');
+    }
+  };
+
+  const handleCopyApiKey = (value: string) => {
+    navigator.clipboard.writeText(value);
+    toast.success('API key copied to clipboard');
+  };
+
+  const generateApiKey = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = 'sk-';
+    for (let i = 0; i < 48; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  };
+
+  // LLM Functions
   const handleAddLLM = () => {
     if (!newLLM.name || !newLLM.model) {
       toast.error('Please fill in all required fields');
@@ -240,8 +439,7 @@ export default function AdminPanel() {
   const handleSaveAll = async () => {
     setSaving(true);
     try {
-      // Save to backend
-      await fetch('/api/admin/config', {
+      await fetch('https://adele-api.ayonix.com/api/admin/config', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -250,7 +448,6 @@ export default function AdminPanel() {
         body: JSON.stringify({
           llmModels,
           voiceModels,
-          apiConfigs,
         }),
       });
       toast.success('Configuration saved successfully');
@@ -336,23 +533,23 @@ export default function AdminPanel() {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-2xl font-semibold">LLM Models</h2>
-                    <p className="text-zinc-400 mt-1">Configure AI models for code generation</p>
+                    <p className="text-zinc-400 mt-1">Configure AI language models for the application</p>
                   </div>
                   <button
                     onClick={() => setShowAddLLM(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
                   >
                     <Plus className="h-4 w-4" />
                     Add Model
                   </button>
                 </div>
 
-                {/* Add LLM Modal */}
+                {/* Add LLM Form */}
                 {showAddLLM && (
                   <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-lg font-semibold">Add New LLM Model</h3>
-                      <button onClick={() => setShowAddLLM(false)} className="p-1 hover:bg-zinc-800 rounded">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-semibold">Add New LLM Model</h3>
+                      <button onClick={() => setShowAddLLM(false)} className="text-zinc-400 hover:text-white">
                         <X className="h-5 w-5" />
                       </button>
                     </div>
@@ -390,47 +587,45 @@ export default function AdminPanel() {
                         />
                       </div>
                       <div>
+                        <label className="block text-sm font-medium mb-2">Base URL (optional)</label>
+                        <input
+                          type="text"
+                          value={newLLM.baseUrl}
+                          onChange={(e) => setNewLLM({ ...newLLM, baseUrl: e.target.value })}
+                          className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
+                          placeholder="For custom endpoints"
+                        />
+                      </div>
+                      <div className="col-span-2">
                         <label className="block text-sm font-medium mb-2">API Key</label>
                         <input
                           type="password"
                           value={newLLM.apiKey}
                           onChange={(e) => setNewLLM({ ...newLLM, apiKey: e.target.value })}
                           className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
-                          placeholder="sk-..."
+                          placeholder="API Key"
                         />
                       </div>
-                      {(newLLM.provider === 'ollama' || newLLM.provider === 'custom') && (
-                        <div className="col-span-2">
-                          <label className="block text-sm font-medium mb-2">Base URL</label>
+                      <div className="col-span-2 flex items-center gap-6">
+                        <label className="flex items-center gap-2 cursor-pointer">
                           <input
-                            type="text"
-                            value={newLLM.baseUrl}
-                            onChange={(e) => setNewLLM({ ...newLLM, baseUrl: e.target.value })}
-                            className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
-                            placeholder="http://localhost:11434"
+                            type="checkbox"
+                            checked={newLLM.isActive}
+                            onChange={(e) => setNewLLM({ ...newLLM, isActive: e.target.checked })}
+                            className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-blue-500"
                           />
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-4 mt-4">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={newLLM.isActive}
-                          onChange={(e) => setNewLLM({ ...newLLM, isActive: e.target.checked })}
-                          className="rounded border-zinc-600"
-                        />
-                        <span className="text-sm">Active</span>
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={newLLM.isDefault}
-                          onChange={(e) => setNewLLM({ ...newLLM, isDefault: e.target.checked })}
-                          className="rounded border-zinc-600"
-                        />
-                        <span className="text-sm">Set as default</span>
-                      </label>
+                          <span className="text-sm">Active</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={newLLM.isDefault}
+                            onChange={(e) => setNewLLM({ ...newLLM, isDefault: e.target.checked })}
+                            className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-blue-500"
+                          />
+                          <span className="text-sm">Set as Default</span>
+                        </label>
+                      </div>
                     </div>
                     <div className="flex justify-end gap-3 mt-6">
                       <button
@@ -451,71 +646,55 @@ export default function AdminPanel() {
 
                 {/* LLM Models List */}
                 <div className="space-y-3">
-                  {llmModels.map((model) => (
+                  {llmModels.map((llm) => (
                     <div
-                      key={model.id}
+                      key={llm.id}
                       className={`flex items-center justify-between p-4 rounded-xl border ${
-                        model.isActive ? 'bg-zinc-900 border-zinc-800' : 'bg-zinc-900/50 border-zinc-800/50 opacity-60'
+                        llm.isActive ? 'bg-zinc-900 border-zinc-800' : 'bg-zinc-900/50 border-zinc-800/50 opacity-60'
                       }`}
                     >
                       <div className="flex items-center gap-4">
-                        <div className={`p-2 rounded-lg ${model.isActive ? 'bg-blue-500/20' : 'bg-zinc-800'}`}>
-                          <Brain className={`h-5 w-5 ${model.isActive ? 'text-blue-500' : 'text-zinc-500'}`} />
+                        <div className={`p-2 rounded-lg ${llm.isActive ? 'bg-blue-500/20' : 'bg-zinc-800'}`}>
+                          <Brain className={`h-5 w-5 ${llm.isActive ? 'text-blue-500' : 'text-zinc-500'}`} />
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">{model.name}</span>
-                            {model.isDefault && (
-                              <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">Default</span>
+                            <span className="font-medium">{llm.name}</span>
+                            {llm.isDefault && (
+                              <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">Default</span>
                             )}
                           </div>
                           <div className="text-sm text-zinc-500">
-                            {llmProviders.find(p => p.value === model.provider)?.label} • {model.model}
+                            {llmProviders.find(p => p.value === llm.provider)?.label} • {llm.model}
                           </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleToggleLLMActive(model.id)}
-                          className={`p-2 rounded-lg transition-colors ${
-                            model.isActive ? 'text-green-500 hover:bg-green-500/20' : 'text-zinc-500 hover:bg-zinc-800'
-                          }`}
-                          title={model.isActive ? 'Disable' : 'Enable'}
-                        >
-                          {model.isActive ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}
-                        </button>
-                        {!model.isDefault && (
+                        {!llm.isDefault && (
                           <button
-                            onClick={() => handleSetDefaultLLM(model.id)}
-                            className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
-                            title="Set as default"
+                            onClick={() => handleSetDefaultLLM(llm.id)}
+                            className="px-3 py-1 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
                           >
-                            <Settings className="h-4 w-4" />
+                            Set Default
                           </button>
                         )}
                         <button
-                          onClick={() => handleDeleteLLM(model.id)}
+                          onClick={() => handleToggleLLMActive(llm.id)}
+                          className={`p-2 rounded-lg transition-colors ${
+                            llm.isActive ? 'text-green-500 hover:bg-green-500/20' : 'text-zinc-500 hover:bg-zinc-800'
+                          }`}
+                        >
+                          {llm.isActive ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteLLM(llm.id)}
                           className="p-2 text-zinc-500 hover:text-red-500 hover:bg-red-500/20 rounded-lg transition-colors"
-                          title="Delete"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
                     </div>
                   ))}
-                </div>
-
-                {/* Provider Info */}
-                <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
-                  <h3 className="font-semibold mb-4">Supported Providers</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {llmProviders.map((provider) => (
-                      <div key={provider.value} className="flex items-center gap-2 text-sm text-zinc-400">
-                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                        {provider.label}
-                      </div>
-                    ))}
-                  </div>
                 </div>
               </div>
             )}
@@ -530,19 +709,19 @@ export default function AdminPanel() {
                   </div>
                   <button
                     onClick={() => setShowAddVoice(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
                   >
                     <Plus className="h-4 w-4" />
                     Add Voice
                   </button>
                 </div>
 
-                {/* Add Voice Modal */}
+                {/* Add Voice Form */}
                 {showAddVoice && (
                   <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-lg font-semibold">Add New Voice Model</h3>
-                      <button onClick={() => setShowAddVoice(false)} className="p-1 hover:bg-zinc-800 rounded">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-semibold">Add New Voice</h3>
+                      <button onClick={() => setShowAddVoice(false)} className="text-zinc-400 hover:text-white">
                         <X className="h-5 w-5" />
                       </button>
                     </div>
@@ -675,31 +854,76 @@ export default function AdminPanel() {
                 </div>
 
                 <div className="space-y-4">
-                  {[
-                    { name: 'OpenAI', key: 'OPENAI_API_KEY', description: 'For GPT models and embeddings' },
-                    { name: 'Anthropic', key: 'ANTHROPIC_API_KEY', description: 'For Claude models' },
-                    { name: 'ElevenLabs', key: 'ELEVENLABS_API_KEY', description: 'For text-to-speech' },
-                    { name: 'Stripe', key: 'STRIPE_SECRET_KEY', description: 'For payment processing' },
-                    { name: 'Resend', key: 'RESEND_API_KEY', description: 'For email notifications' },
-                    { name: 'GitHub', key: 'GITHUB_CLIENT_SECRET', description: 'For OAuth and integrations' },
-                  ].map((api) => (
-                    <div key={api.key} className="flex items-center justify-between p-4 bg-zinc-900 border border-zinc-800 rounded-xl">
-                      <div className="flex items-center gap-4">
-                        <div className="p-2 bg-zinc-800 rounded-lg">
-                          <Key className="h-5 w-5 text-zinc-400" />
+                  {apiKeys.map((apiKey) => (
+                    <div key={apiKey.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="p-2 bg-zinc-800 rounded-lg">
+                            <Key className="h-5 w-5 text-zinc-400" />
+                          </div>
+                          <div>
+                            <span className="font-medium">{apiKey.name}</span>
+                            <div className="text-sm text-zinc-500">{apiKey.description}</div>
+                          </div>
                         </div>
-                        <div>
-                          <span className="font-medium">{api.name}</span>
-                          <div className="text-sm text-zinc-500">{api.description}</div>
+                        <div className="flex items-center gap-3">
+                          {apiKey.isConfigured ? (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-full">
+                              <Check className="h-3 w-3" />
+                              Configured
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded-full">
+                              <AlertTriangle className="h-3 w-3" />
+                              Not Set
+                            </div>
+                          )}
+                          <button
+                            onClick={() => setEditingApiKey(editingApiKey === apiKey.id ? null : apiKey.id)}
+                            className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm text-zinc-500 font-mono">{api.key}</span>
-                        <div className="flex items-center gap-1 px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-full">
-                          <Check className="h-3 w-3" />
-                          Configured
+                      
+                      {editingApiKey === apiKey.id && (
+                        <div className="mt-4 pt-4 border-t border-zinc-800">
+                          <div className="flex gap-3">
+                            <div className="flex-1 relative">
+                              <input
+                                type={showApiKeyValue[apiKey.id] ? 'text' : 'password'}
+                                value={apiKey.value}
+                                onChange={(e) => setApiKeys(apiKeys.map(k => 
+                                  k.id === apiKey.id ? { ...k, value: e.target.value } : k
+                                ))}
+                                className="w-full px-4 py-2 pr-20 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500 font-mono text-sm"
+                                placeholder={`Enter ${apiKey.name} API key`}
+                              />
+                              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                <button
+                                  onClick={() => setShowApiKeyValue({ ...showApiKeyValue, [apiKey.id]: !showApiKeyValue[apiKey.id] })}
+                                  className="p-1 text-zinc-500 hover:text-white"
+                                >
+                                  {showApiKeyValue[apiKey.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                </button>
+                                <button
+                                  onClick={() => handleCopyApiKey(apiKey.value)}
+                                  className="p-1 text-zinc-500 hover:text-white"
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleSaveApiKey(apiKey)}
+                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                            >
+                              Save
+                            </button>
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -709,7 +933,7 @@ export default function AdminPanel() {
                   <div>
                     <p className="text-yellow-200 font-medium">Security Notice</p>
                     <p className="text-yellow-200/70 text-sm mt-1">
-                      API keys are stored securely in environment variables. To update keys, modify the .env file on the server and restart the application.
+                      API keys are stored securely. For production environments, use Cloudflare Worker secrets via <code className="bg-zinc-800 px-1 rounded">wrangler secret put</code>.
                     </p>
                   </div>
                 </div>
@@ -719,9 +943,18 @@ export default function AdminPanel() {
             {/* Users Tab */}
             {activeTab === 'users' && (
               <div className="space-y-6">
-                <div>
-                  <h2 className="text-2xl font-semibold">User Management</h2>
-                  <p className="text-zinc-400 mt-1">Manage user accounts and permissions</p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-2xl font-semibold">User Management</h2>
+                    <p className="text-zinc-400 mt-1">Manage user accounts and permissions</p>
+                  </div>
+                  <button
+                    onClick={fetchUsers}
+                    className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${loadingUsers ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </button>
                 </div>
 
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
@@ -746,6 +979,7 @@ export default function AdminPanel() {
                             <th className="text-left px-6 py-3 text-sm font-medium text-zinc-400">Role</th>
                             <th className="text-left px-6 py-3 text-sm font-medium text-zinc-400">Company</th>
                             <th className="text-left px-6 py-3 text-sm font-medium text-zinc-400">Joined</th>
+                            <th className="text-right px-6 py-3 text-sm font-medium text-zinc-400">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -776,6 +1010,31 @@ export default function AdminPanel() {
                               <td className="px-6 py-4 text-zinc-400">{u.company || '-'}</td>
                               <td className="px-6 py-4 text-zinc-400">
                                 {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '-'}
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    onClick={() => handleEditUser(u)}
+                                    className="p-2 text-zinc-400 hover:text-blue-400 hover:bg-blue-500/20 rounded-lg transition-colors"
+                                    title="Edit user"
+                                  >
+                                    <Edit2 className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenPasswordModal(u)}
+                                    className="p-2 text-zinc-400 hover:text-yellow-400 hover:bg-yellow-500/20 rounded-lg transition-colors"
+                                    title="Change password"
+                                  >
+                                    <Lock className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenDeleteModal(u)}
+                                    className="p-2 text-zinc-400 hover:text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
+                                    title="Delete user"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -837,6 +1096,191 @@ export default function AdminPanel() {
           </div>
         </div>
       </div>
+
+      {/* Edit User Modal */}
+      {showEditModal && editingUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold">Edit User</h3>
+              <button onClick={() => setShowEditModal(false)} className="text-zinc-400 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Name</label>
+                <input
+                  type="text"
+                  value={editingUser.name}
+                  onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
+                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Email</label>
+                <input
+                  type="email"
+                  value={editingUser.email}
+                  onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
+                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Role</label>
+                <select
+                  value={editingUser.role}
+                  onChange={(e) => setEditingUser({ ...editingUser, role: e.target.value })}
+                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
+                >
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Company</label>
+                <input
+                  type="text"
+                  value={editingUser.company || ''}
+                  onChange={(e) => setEditingUser({ ...editingUser, company: e.target.value })}
+                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Position</label>
+                <input
+                  type="text"
+                  value={editingUser.position || ''}
+                  onChange={(e) => setEditingUser({ ...editingUser, position: e.target.value })}
+                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Phone</label>
+                <input
+                  type="tel"
+                  value={editingUser.phone || ''}
+                  onChange={(e) => setEditingUser({ ...editingUser, phone: e.target.value })}
+                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="px-4 py-2 text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveUser}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Password Modal */}
+      {showPasswordModal && editingUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold">Change Password</h3>
+              <button onClick={() => setShowPasswordModal(false)} className="text-zinc-400 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-zinc-400 text-sm mb-4">
+              Changing password for: <span className="text-white font-medium">{editingUser.email}</span>
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">New Password</label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full px-4 py-2 pr-10 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
+                    placeholder="Enter new password"
+                  />
+                  <button
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Confirm Password</label>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500"
+                  placeholder="Confirm new password"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowPasswordModal(false)}
+                className="px-4 py-2 text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleChangePassword}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+              >
+                Change Password
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Modal */}
+      {showDeleteModal && userToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-red-400">Delete User</h3>
+              <button onClick={() => setShowDeleteModal(false)} className="text-zinc-400 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-4">
+              <p className="text-red-200">
+                Are you sure you want to delete this user? This action cannot be undone.
+              </p>
+            </div>
+            <div className="bg-zinc-800 rounded-lg p-4">
+              <p className="text-sm text-zinc-400">User to delete:</p>
+              <p className="font-medium">{userToDelete.name}</p>
+              <p className="text-sm text-zinc-500">{userToDelete.email}</p>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteUser}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+              >
+                Delete User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

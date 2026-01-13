@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
-import { users, stripe } from "@/lib/api";
+import { users, stripe, auth } from "@/lib/api";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -12,16 +12,48 @@ import {
   Loader2,
   Save,
   ExternalLink,
+  Eye,
+  EyeOff,
+  Check,
 } from "lucide-react";
+
+interface NotificationSettings {
+  email_updates: boolean;
+  marketing: boolean;
+  security: boolean;
+}
 
 export default function Settings() {
   const [, setLocation] = useLocation();
   const { user, subscription, loading: authLoading, refreshUser } = useAuth();
   const [activeTab, setActiveTab] = useState<"profile" | "billing" | "notifications" | "security">("profile");
   const [loading, setLoading] = useState(false);
+  const [savingNotifications, setSavingNotifications] = useState(false);
+  const [savingPassword, setSavingPassword] = useState(false);
+  
+  // Profile state
   const [profile, setProfile] = useState({
     name: "",
     email: "",
+    phone: "",
+    company: "",
+    position: "",
+  });
+
+  // Password state
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+
+  // Notification settings
+  const [notifications, setNotifications] = useState<NotificationSettings>({
+    email_updates: true,
+    marketing: false,
+    security: true,
   });
 
   useEffect(() => {
@@ -35,20 +67,94 @@ export default function Settings() {
       setProfile({
         name: user.name || "",
         email: user.email || "",
+        phone: (user as any).phone || "",
+        company: (user as any).company || "",
+        position: (user as any).position || "",
       });
+      
+      // Load notification settings from user settings if available
+      loadNotificationSettings();
     }
   }, [user]);
+
+  const loadNotificationSettings = async () => {
+    try {
+      const response = await users.getProfile();
+      if (response.settings?.notifications) {
+        setNotifications(response.settings.notifications as NotificationSettings);
+      }
+    } catch (error) {
+      console.error("Failed to load notification settings:", error);
+    }
+  };
 
   const handleSaveProfile = async () => {
     setLoading(true);
     try {
-      await users.updateProfile(profile);
+      await users.updateProfile({ name: profile.name });
       await refreshUser();
-      toast.success("Profile updated");
+      toast.success("Profile updated successfully");
     } catch (error: any) {
       toast.error(error.message || "Failed to update profile");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveNotifications = async () => {
+    setSavingNotifications(true);
+    try {
+      await users.updateSettings({ notifications });
+      toast.success("Notification preferences saved");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save notification preferences");
+    } finally {
+      setSavingNotifications(false);
+    }
+  };
+
+  const handleToggleNotification = async (key: keyof NotificationSettings) => {
+    const newNotifications = {
+      ...notifications,
+      [key]: !notifications[key],
+    };
+    setNotifications(newNotifications);
+    
+    // Auto-save on toggle
+    try {
+      await users.updateSettings({ notifications: newNotifications });
+      toast.success("Notification preference updated");
+    } catch (error: any) {
+      // Revert on error
+      setNotifications(notifications);
+      toast.error("Failed to update notification preference");
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      toast.error("New passwords do not match");
+      return;
+    }
+    
+    if (passwordForm.newPassword.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    
+    setSavingPassword(true);
+    try {
+      await auth.changePassword(passwordForm.currentPassword, passwordForm.newPassword);
+      toast.success("Password changed successfully");
+      setPasswordForm({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+    } catch (error: any) {
+      toast.error(error.message || "Failed to change password");
+    } finally {
+      setSavingPassword(false);
     }
   };
 
@@ -142,8 +248,45 @@ export default function Settings() {
                     <input
                       type="email"
                       value={profile.email}
-                      onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+                      disabled
+                      className="w-full px-4 py-3 rounded-xl border bg-muted text-muted-foreground cursor-not-allowed"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Contact support to change your email address
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Company</label>
+                      <input
+                        type="text"
+                        value={profile.company}
+                        onChange={(e) => setProfile({ ...profile, company: e.target.value })}
+                        className="w-full px-4 py-3 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                        placeholder="Your company"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Position</label>
+                      <input
+                        type="text"
+                        value={profile.position}
+                        onChange={(e) => setProfile({ ...profile, position: e.target.value })}
+                        className="w-full px-4 py-3 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                        placeholder="Your role"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Phone</label>
+                    <input
+                      type="tel"
+                      value={profile.phone}
+                      onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
                       className="w-full px-4 py-3 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                      placeholder="+1 (555) 000-0000"
                     />
                   </div>
 
@@ -231,22 +374,30 @@ export default function Settings() {
             {/* Notifications Tab */}
             {activeTab === "notifications" && (
               <div className="bg-card border rounded-2xl p-6">
-                <h2 className="text-lg font-semibold mb-6">Notification Preferences</h2>
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-semibold">Notification Preferences</h2>
+                  {savingNotifications && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Saving...
+                    </div>
+                  )}
+                </div>
 
                 <div className="space-y-4">
                   {[
                     {
-                      id: "email_updates",
+                      id: "email_updates" as keyof NotificationSettings,
                       label: "Email Updates",
                       description: "Receive updates about your projects via email",
                     },
                     {
-                      id: "marketing",
+                      id: "marketing" as keyof NotificationSettings,
                       label: "Marketing Emails",
                       description: "Receive news, tips, and special offers",
                     },
                     {
-                      id: "security",
+                      id: "security" as keyof NotificationSettings,
                       label: "Security Alerts",
                       description: "Get notified about security-related events",
                     },
@@ -256,11 +407,35 @@ export default function Settings() {
                         <p className="font-medium">{pref.label}</p>
                         <p className="text-sm text-muted-foreground">{pref.description}</p>
                       </div>
-                      <button className="w-12 h-6 bg-primary rounded-full relative">
-                        <span className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full" />
+                      <button
+                        onClick={() => handleToggleNotification(pref.id)}
+                        className={`w-12 h-6 rounded-full relative transition-colors ${
+                          notifications[pref.id] ? "bg-primary" : "bg-muted"
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${
+                            notifications[pref.id] ? "right-1" : "left-1"
+                          }`}
+                        />
                       </button>
                     </div>
                   ))}
+                </div>
+
+                <div className="mt-6 pt-6 border-t">
+                  <button
+                    onClick={handleSaveNotifications}
+                    disabled={savingNotifications}
+                    className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl disabled:opacity-50"
+                  >
+                    {savingNotifications ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Check className="h-4 w-4" />
+                    )}
+                    Save All Preferences
+                  </button>
                 </div>
               </div>
             )}
@@ -274,30 +449,65 @@ export default function Settings() {
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium mb-2">Current Password</label>
-                      <input
-                        type="password"
-                        className="w-full px-4 py-3 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
+                      <div className="relative">
+                        <input
+                          type={showCurrentPassword ? "text" : "password"}
+                          value={passwordForm.currentPassword}
+                          onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                          className="w-full px-4 py-3 pr-12 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showCurrentPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                        </button>
+                      </div>
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium mb-2">New Password</label>
-                      <input
-                        type="password"
-                        className="w-full px-4 py-3 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
+                      <div className="relative">
+                        <input
+                          type={showNewPassword ? "text" : "password"}
+                          value={passwordForm.newPassword}
+                          onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                          className="w-full px-4 py-3 pr-12 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPassword(!showNewPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                        </button>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Must be at least 8 characters
+                      </p>
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium mb-2">Confirm New Password</label>
                       <input
-                        type="password"
+                        type={showNewPassword ? "text" : "password"}
+                        value={passwordForm.confirmPassword}
+                        onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
                         className="w-full px-4 py-3 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
                       />
                     </div>
 
-                    <button className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl">
-                      <Save className="h-4 w-4" />
+                    <button
+                      onClick={handleChangePassword}
+                      disabled={savingPassword || !passwordForm.currentPassword || !passwordForm.newPassword}
+                      className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl disabled:opacity-50"
+                    >
+                      {savingPassword ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
                       Update Password
                     </button>
                   </div>
@@ -314,9 +524,9 @@ export default function Settings() {
                   </button>
                 </div>
 
-                <div className="bg-red-50 border border-red-200 rounded-2xl p-6">
-                  <h2 className="text-lg font-semibold text-red-700 mb-4">Danger Zone</h2>
-                  <p className="text-red-600 mb-4">
+                <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-2xl p-6">
+                  <h2 className="text-lg font-semibold text-red-700 dark:text-red-400 mb-4">Danger Zone</h2>
+                  <p className="text-red-600 dark:text-red-400/80 mb-4">
                     Once you delete your account, there is no going back. Please be certain.
                   </p>
                   <button className="px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition">

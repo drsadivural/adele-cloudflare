@@ -109,6 +109,15 @@ adminRoutes.get("/users", async (c) => {
   return c.json({ users, total: total?.count || 0 });
 });
 
+// SHA-256 hash function for password hashing (matching auth.ts)
+async function hashPasswordSHA256(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 // Update user role
 adminRoutes.patch("/users/:id/role", async (c) => {
   const db = c.get("db");
@@ -122,8 +131,153 @@ adminRoutes.patch("/users/:id/role", async (c) => {
   }
   
   await db.update(schema.users)
-    .set({ role })
+    .set({ role, updatedAt: new Date() })
     .where(eq(schema.users.id, userId));
+  
+  return c.json({ success: true });
+});
+
+// Update user (full update)
+adminRoutes.put("/users/:id", async (c) => {
+  const db = c.get("db");
+  const userId = parseInt(c.req.param("id"));
+  const body = await c.req.json();
+  
+  const { name, email, role, phone, company, position } = body;
+  
+  // Validate role if provided
+  if (role && !["user", "admin"].includes(role)) {
+    return c.json({ error: "Invalid role" }, 400);
+  }
+  
+  // Check if email is already taken by another user
+  if (email) {
+    const existingUser = await db.select()
+      .from(schema.users)
+      .where(eq(schema.users.email, email.toLowerCase()))
+      .get();
+    
+    if (existingUser && existingUser.id !== userId) {
+      return c.json({ error: "Email already in use" }, 400);
+    }
+  }
+  
+  const updateData: any = { updatedAt: new Date() };
+  if (name !== undefined) updateData.name = name;
+  if (email !== undefined) updateData.email = email.toLowerCase();
+  if (role !== undefined) updateData.role = role;
+  if (phone !== undefined) updateData.phone = phone;
+  if (company !== undefined) updateData.company = company;
+  if (position !== undefined) updateData.position = position;
+  
+  await db.update(schema.users)
+    .set(updateData)
+    .where(eq(schema.users.id, userId));
+  
+  // Get updated user
+  const updatedUser = await db.select({
+    id: schema.users.id,
+    email: schema.users.email,
+    name: schema.users.name,
+    role: schema.users.role,
+    phone: schema.users.phone,
+    company: schema.users.company,
+    position: schema.users.position,
+    createdAt: schema.users.createdAt,
+    updatedAt: schema.users.updatedAt,
+  })
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+  
+  return c.json({ success: true, user: updatedUser });
+});
+
+// Change user password
+adminRoutes.put("/users/:id/password", async (c) => {
+  const db = c.get("db");
+  const userId = parseInt(c.req.param("id"));
+  const body = await c.req.json();
+  
+  const { password } = body;
+  
+  if (!password || password.length < 6) {
+    return c.json({ error: "Password must be at least 6 characters" }, 400);
+  }
+  
+  // Hash password using SHA-256 (matching auth.ts)
+  const passwordHash = await hashPasswordSHA256(password);
+  
+  await db.update(schema.users)
+    .set({ password: passwordHash, updatedAt: new Date() })
+    .where(eq(schema.users.id, userId));
+  
+  return c.json({ success: true });
+});
+
+// Delete user
+adminRoutes.delete("/users/:id", async (c) => {
+  const db = c.get("db");
+  const userId = parseInt(c.req.param("id"));
+  const currentUser = c.get("user");
+  
+  // Prevent admin from deleting themselves
+  if (currentUser && currentUser.id === userId) {
+    return c.json({ error: "Cannot delete your own account" }, 400);
+  }
+  
+  // Check if user exists
+  const user = await db.select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+  
+  if (!user) {
+    return c.json({ error: "User not found" }, 404);
+  }
+  
+  // Delete user
+  await db.delete(schema.users)
+    .where(eq(schema.users.id, userId));
+  
+  return c.json({ success: true });
+});
+
+// Save API keys configuration
+adminRoutes.post("/config/api-keys", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user");
+  const body = await c.req.json();
+  
+  const { key, value } = body;
+  
+  if (!key || !value) {
+    return c.json({ error: "Key and value are required" }, 400);
+  }
+  
+  // Check if exists
+  const existing = await db.select()
+    .from(schema.adminConfig)
+    .where(eq(schema.adminConfig.key, key))
+    .get();
+  
+  if (existing) {
+    await db.update(schema.adminConfig)
+      .set({ 
+        value, 
+        isEncrypted: true,
+        updatedBy: user?.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.adminConfig.key, key));
+  } else {
+    await db.insert(schema.adminConfig).values({
+      key,
+      value,
+      isEncrypted: true,
+      updatedBy: user?.id,
+    });
+  }
   
   return c.json({ success: true });
 });

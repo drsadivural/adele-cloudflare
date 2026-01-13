@@ -516,16 +516,17 @@ authRoutes.post("/change-password", async (c) => {
       return c.json({ error: "User not found" }, 404);
     }
     
+    // Note: schema.users.passwordHash maps to "password" column in DB
     const isValid = await verifyPassword(currentPassword, user.passwordHash);
     
     if (!isValid) {
       return c.json({ error: "Current password is incorrect" }, 401);
     }
     
-    const passwordHash = await hashPassword(newPassword);
+    const newPasswordHash = await hashPassword(newPassword);
     
     await db.update(schema.users)
-      .set({ passwordHash })
+      .set({ passwordHash: newPasswordHash, updatedAt: new Date().toISOString() })
       .where(eq(schema.users.id, user.id));
     
     if (logger) logger.info("Password changed", { userId: user.id });
