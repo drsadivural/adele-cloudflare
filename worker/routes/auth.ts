@@ -15,9 +15,18 @@ async function hashPassword(password: string): Promise<string> {
 
 async function verifyPassword(password: string, hash: string): Promise<boolean> {
   try {
-    return await bcrypt.compare(password, hash);
+    console.log("verifyPassword called");
+    console.log("Password length:", password.length);
+    console.log("Hash length:", hash.length);
+    console.log("Hash starts with:", hash.substring(0, 7));
+    
+    // bcryptjs.compare returns a promise
+    const result = bcrypt.compareSync(password, hash);
+    console.log("bcrypt.compareSync result:", result);
+    return result;
   } catch (error) {
     console.error("Password verification error:", error);
+    console.error("Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
     return false;
   }
 }
@@ -179,11 +188,17 @@ authRoutes.post("/login", async (c) => {
     // Find user
     const user = await db.select().from(schema.users).where(eq(schema.users.email, email.toLowerCase())).get();
     
+    console.log("Login attempt for:", email.toLowerCase());
+    console.log("User found:", user ? "yes" : "no");
+    
     if (!user) {
       if (metrics) metrics.increment("auth.login.failed");
       if (logger) logger.warn("Login failed - user not found", { email });
       return c.json({ error: "Invalid email or password" }, 401);
     }
+    
+    console.log("User passwordHash exists:", !!user.passwordHash);
+    console.log("User passwordHash prefix:", user.passwordHash ? user.passwordHash.substring(0, 10) : "none");
     
     // Check if user has a password (might be OAuth-only user)
     if (!user.passwordHash) {
@@ -191,7 +206,9 @@ authRoutes.post("/login", async (c) => {
     }
     
     // Verify password using bcrypt
+    console.log("Attempting bcrypt compare...");
     const isValid = await verifyPassword(password, user.passwordHash);
+    console.log("Password valid:", isValid);
     
     if (!isValid) {
       if (metrics) metrics.increment("auth.login.failed");
