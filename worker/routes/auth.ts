@@ -190,10 +190,10 @@ authRoutes.post("/login", async (c) => {
       return c.json({ error: "Invalid email or password" }, 401);
     }
     
-    // Update last signed in
+    // Update last signed in (using updated_at since last_signed_in doesn't exist)
     try {
       await db.update(schema.users)
-        .set({ lastSignedIn: new Date() })
+        .set({ updatedAt: new Date().toISOString() })
         .where(eq(schema.users.id, user.id));
     } catch (e) {
       console.log("Could not update last signed in:", e);
@@ -204,7 +204,7 @@ authRoutes.post("/login", async (c) => {
       { 
         userId: user.id, 
         email: user.email,
-        role: user.role,
+        role: user.role || "user",
         exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
       }, 
       c.env.JWT_SECRET
@@ -219,9 +219,7 @@ authRoutes.post("/login", async (c) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role,
-        emailVerified: user.emailVerified,
-        avatarUrl: user.avatarUrl,
+        role: user.role || "user",
       },
       token,
     });
@@ -263,9 +261,7 @@ authRoutes.get("/me", async (c) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role,
-        emailVerified: user.emailVerified,
-        avatarUrl: user.avatarUrl,
+        role: user.role || "user",
         createdAt: user.createdAt,
       },
       subscription: subscription ? {
