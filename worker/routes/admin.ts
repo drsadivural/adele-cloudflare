@@ -56,7 +56,13 @@ adminRoutes.get("/stats", async (c) => {
     .orderBy(desc(schema.appTemplates.usageCount))
     .limit(10);
   
+  // Return in format expected by frontend
   return c.json({
+    totalUsers: totalUsers?.count || 0,
+    totalProjects: totalProjects?.count || 0,
+    activeSubscriptions: (proUsers?.count || 0) + (enterpriseUsers?.count || 0),
+    monthlyRevenue: ((proUsers?.count || 0) * 29) + ((enterpriseUsers?.count || 0) * 99),
+    // Also include detailed stats for other uses
     users: {
       total: totalUsers?.count || 0,
       activeWeekly: activeUsers?.count || 0,
