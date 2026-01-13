@@ -20,9 +20,10 @@ adminRoutes.get("/stats", async (c) => {
   
   // User stats
   const totalUsers = await db.select({ count: count() }).from(schema.users).get();
+  // Use updated_at instead of lastSignedIn since that column doesn't exist
   const activeUsers = await db.select({ count: count() })
     .from(schema.users)
-    .where(sql`${schema.users.lastSignedIn} > datetime('now', '-7 days')`)
+    .where(sql`${schema.users.updatedAt} > datetime('now', '-7 days')`)
     .get();
   
   // Project stats
@@ -79,14 +80,18 @@ adminRoutes.get("/users", async (c) => {
   const limit = parseInt(c.req.query("limit") || "50");
   const offset = parseInt(c.req.query("offset") || "0");
   
+  // Only select columns that exist in the actual database
+  // Actual columns: id, email, password, name, role, phone, company, position, face_embedding, voice_embedding, created_at, updated_at
   const users = await db.select({
     id: schema.users.id,
     email: schema.users.email,
     name: schema.users.name,
     role: schema.users.role,
-    emailVerified: schema.users.emailVerified,
+    phone: schema.users.phone,
+    company: schema.users.company,
+    position: schema.users.position,
     createdAt: schema.users.createdAt,
-    lastSignedIn: schema.users.lastSignedIn,
+    updatedAt: schema.users.updatedAt,
   })
     .from(schema.users)
     .orderBy(desc(schema.users.createdAt))
