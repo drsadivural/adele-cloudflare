@@ -7,22 +7,17 @@ import { sqliteTable, text, integer, real, blob } from "drizzle-orm/sqlite-core"
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
+  // Column is named "password" in the actual database (stores bcrypt hash)
+  passwordHash: text("password").notNull(),
   name: text("name").notNull(),
-  role: text("role", { enum: ["user", "admin", "owner"] }).default("user").notNull(),
-  emailVerified: integer("email_verified", { mode: "boolean" }).default(false),
-  verificationToken: text("verification_token"),
-  resetToken: text("reset_token"),
-  resetTokenExpiry: integer("reset_token_expiry"),
-  avatarUrl: text("avatar_url"),
-  organization: text("organization"),
-  timezone: text("timezone").default("UTC"),
-  totpSecret: text("totp_secret"), // Encrypted TOTP secret for 2FA
-  totpEnabled: integer("totp_enabled", { mode: "boolean" }).default(false),
-  recoveryCodes: text("recovery_codes"), // Encrypted JSON array
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  lastSignedIn: integer("last_signed_in", { mode: "timestamp" }),
+  role: text("role", { enum: ["user", "admin", "owner"] }).default("user"),
+  phone: text("phone"),
+  company: text("company"),
+  position: text("position"),
+  faceEmbedding: text("face_embedding"),
+  voiceEmbedding: text("voice_embedding"),
+  createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
 export const sessions = sqliteTable("sessions", {
