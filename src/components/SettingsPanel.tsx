@@ -991,7 +991,7 @@ export default function SettingsPanel({
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-medium">Payment Methods</h3>
                 <button 
-                  onClick={() => { alert('Add Card clicked'); setShowAddCardModal(true); }}
+                  onClick={() => setShowAddCardModal(true)}
                   className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
                 >
                   <Plus className="w-4 h-4" />
@@ -1745,7 +1745,7 @@ export default function SettingsPanel({
       </div>
 
       {/* Add Card Modal - rendered at root level using Portal */}
-      {showAddCardModal && createPortal(
+      {showAddCardModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60" onClick={() => setShowAddCardModal(false)}>
           <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
@@ -1839,8 +1839,7 @@ export default function SettingsPanel({
               </div>
             </form>
           </div>
-        </div>,
-        document.body
+        </div>
       )}
     </div>
   );
