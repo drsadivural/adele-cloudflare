@@ -86,28 +86,38 @@ userRoutes.patch("/profile", async (c) => {
   const db = c.get("db");
   const body = await c.req.json();
   
-  const { name, avatarUrl } = body;
+  const { name, avatarUrl, company, position, phone } = body;
   
-  const updateData: Partial<schema.InsertUser> = {
-    updatedAt: new Date(),
+  const updateData: any = {
+    updatedAt: new Date().toISOString(),
   };
   
   if (name !== undefined) updateData.name = name;
   if (avatarUrl !== undefined) updateData.avatarUrl = avatarUrl;
+  if (company !== undefined) updateData.company = company;
+  if (position !== undefined) updateData.position = position;
+  if (phone !== undefined) updateData.phone = phone;
   
-  const result = await db.update(schema.users)
-    .set(updateData)
-    .where(eq(schema.users.id, user.id))
-    .returning();
-  
-  return c.json({ 
-    user: {
-      id: result[0].id,
-      email: result[0].email,
-      name: result[0].name,
-      avatarUrl: result[0].avatarUrl,
-    }
-  });
+  try {
+    const result = await db.update(schema.users)
+      .set(updateData)
+      .where(eq(schema.users.id, user.id))
+      .returning();
+    
+    return c.json({ 
+      user: {
+        id: result[0].id,
+        email: result[0].email,
+        name: result[0].name,
+        company: result[0].company,
+        position: result[0].position,
+        phone: result[0].phone,
+      }
+    });
+  } catch (error: any) {
+    console.error('Profile update error:', error);
+    return c.json({ error: error.message || 'Failed to update profile' }, 500);
+  }
 });
 
 // Update user settings
