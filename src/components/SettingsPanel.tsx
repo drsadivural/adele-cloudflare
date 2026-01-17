@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 
 import {
@@ -1743,8 +1744,8 @@ export default function SettingsPanel({
         </div>
       </div>
 
-      {/* Add Card Modal - rendered at root level */}
-      {showAddCardModal && (
+      {/* Add Card Modal - rendered at root level using Portal */}
+      {showAddCardModal && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60" onClick={() => setShowAddCardModal(false)}>
           <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
@@ -1838,7 +1839,8 @@ export default function SettingsPanel({
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
