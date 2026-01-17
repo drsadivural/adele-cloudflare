@@ -991,7 +991,7 @@ export default function SettingsPanel({
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-medium">Payment Methods</h3>
                 <button 
-                  onClick={() => { console.log('Add Card clicked'); setShowAddCardModal(true); }}
+                  onClick={() => { alert('Add Card clicked'); setShowAddCardModal(true); }}
                   className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
                 >
                   <Plus className="w-4 h-4" />
