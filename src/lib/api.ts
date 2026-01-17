@@ -1052,7 +1052,7 @@ export const integrations = {
     request<{ integrations: InstalledIntegration[] }>("/integrations/installed"),
 
   getDetails: (integrationId: string) =>
-    request<{ integration: Integration & { configFields?: Array<{ name: string; label: string; type: string; required?: boolean; placeholder?: string; description?: string }> } }>(`/integrations/${integrationId}`),
+    request<{ integration: Integration & { configFields?: Array<{ name: string; label: string; type: string; required?: boolean; placeholder?: string; description?: string }> } }>(`/integrations/details/${integrationId}`),
 
   install: (integrationId: string, config?: object) =>
     request<{ installation: InstalledIntegration; message?: string }>("/integrations/install", {
