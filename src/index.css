@@ -217,133 +217,453 @@ code {
   }
 }
 
+/* ============================================
+   LIGHT MODE - COMPREHENSIVE SITE-WIDE STYLES
+   ============================================ */
 
-/* Light mode overrides for Settings Modal and Dashboard */
-:root:not(.dark) {
-  /* Override zinc colors for light mode */
-  --zinc-50: 250 250 250;
-  --zinc-100: 244 244 245;
-  --zinc-200: 228 228 231;
-  --zinc-300: 212 212 216;
-  --zinc-400: 161 161 170;
-  --zinc-500: 113 113 122;
-  --zinc-600: 82 82 91;
-  --zinc-700: 63 63 70;
-  --zinc-800: 39 39 42;
-  --zinc-900: 24 24 27;
-}
-
-/* Light mode specific styles */
+/* Light mode body and root */
+html:not(.dark) body,
 :root:not(.dark) body {
-  background-color: #f4f4f5 !important;
-  color: #18181b !important;
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
 }
 
-:root:not(.dark) .bg-zinc-900 {
+html:not(.dark) #root,
+:root:not(.dark) #root {
+  background-color: #f8fafc !important;
+}
+
+/* ============================================
+   SIDEBAR - Light Mode
+   ============================================ */
+html:not(.dark) aside,
+html:not(.dark) [class*="w-64"][class*="bg-zinc"],
+html:not(.dark) [class*="w-16"][class*="bg-zinc"] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+html:not(.dark) aside *,
+html:not(.dark) [class*="w-64"][class*="bg-zinc"] * {
+  color: #334155;
+}
+
+html:not(.dark) aside h1,
+html:not(.dark) aside h2,
+html:not(.dark) aside h3,
+html:not(.dark) aside .font-semibold,
+html:not(.dark) aside .font-medium {
+  color: #0f172a !important;
+}
+
+/* ============================================
+   MAIN CONTENT AREA - Light Mode
+   ============================================ */
+html:not(.dark) main,
+html:not(.dark) [class*="flex-1"][class*="bg-zinc"] {
+  background-color: #f8fafc !important;
+}
+
+html:not(.dark) main h1,
+html:not(.dark) main h2,
+html:not(.dark) main h3 {
+  color: #0f172a !important;
+}
+
+/* ============================================
+   BACKGROUND COLORS - Light Mode Overrides
+   ============================================ */
+html:not(.dark) .bg-zinc-950 {
   background-color: #ffffff !important;
 }
 
-:root:not(.dark) .bg-zinc-800 {
-  background-color: #f4f4f5 !important;
+html:not(.dark) .bg-zinc-900 {
+  background-color: #f8fafc !important;
 }
 
-:root:not(.dark) .bg-zinc-800\/50 {
-  background-color: rgba(244, 244, 245, 0.8) !important;
+html:not(.dark) .bg-zinc-900\/95 {
+  background-color: rgba(248, 250, 252, 0.98) !important;
 }
 
-:root:not(.dark) .bg-zinc-700 {
-  background-color: #e4e4e7 !important;
+html:not(.dark) .bg-zinc-900\/50 {
+  background-color: rgba(248, 250, 252, 0.5) !important;
 }
 
-:root:not(.dark) .bg-zinc-700\/50 {
-  background-color: rgba(228, 228, 231, 0.5) !important;
+html:not(.dark) .bg-zinc-800 {
+  background-color: #ffffff !important;
 }
 
-:root:not(.dark) .bg-zinc-600 {
-  background-color: #d4d4d8 !important;
-}
-
-:root:not(.dark) .border-zinc-800 {
-  border-color: #e4e4e7 !important;
-}
-
-:root:not(.dark) .border-zinc-700 {
-  border-color: #d4d4d8 !important;
-}
-
-:root:not(.dark) .border-zinc-600 {
-  border-color: #a1a1aa !important;
-}
-
-:root:not(.dark) .text-zinc-400 {
-  color: #52525b !important;
-}
-
-:root:not(.dark) .text-zinc-500 {
-  color: #71717a !important;
-}
-
-:root:not(.dark) .text-zinc-300 {
-  color: #3f3f46 !important;
-}
-
-:root:not(.dark) .text-white {
-  color: #18181b !important;
-}
-
-:root:not(.dark) .hover\:bg-zinc-800:hover {
-  background-color: #e4e4e7 !important;
-}
-
-:root:not(.dark) .hover\:bg-zinc-700:hover {
-  background-color: #d4d4d8 !important;
-}
-
-:root:not(.dark) .hover\:bg-zinc-600:hover {
-  background-color: #a1a1aa !important;
-}
-
-/* Settings Modal specific light mode */
-:root:not(.dark) [class*="bg-zinc-900/95"] {
+html:not(.dark) .bg-zinc-800\/95 {
   background-color: rgba(255, 255, 255, 0.98) !important;
 }
 
-/* Sidebar light mode */
-:root:not(.dark) aside {
-  background-color: #fafafa !important;
-  border-color: #e4e4e7 !important;
+html:not(.dark) .bg-zinc-800\/50 {
+  background-color: rgba(255, 255, 255, 0.5) !important;
 }
 
-/* Main content area light mode */
-:root:not(.dark) main {
+html:not(.dark) .bg-zinc-800\/80 {
+  background-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+html:not(.dark) .bg-zinc-700 {
+  background-color: #f1f5f9 !important;
+}
+
+html:not(.dark) .bg-zinc-700\/50 {
+  background-color: rgba(241, 245, 249, 0.5) !important;
+}
+
+html:not(.dark) .bg-zinc-600 {
+  background-color: #e2e8f0 !important;
+}
+
+html:not(.dark) .bg-zinc-500 {
+  background-color: #cbd5e1 !important;
+}
+
+html:not(.dark) .bg-black {
+  background-color: #f8fafc !important;
+}
+
+html:not(.dark) .bg-black\/50 {
+  background-color: rgba(0, 0, 0, 0.2) !important;
+}
+
+/* ============================================
+   BORDER COLORS - Light Mode Overrides
+   ============================================ */
+html:not(.dark) .border-zinc-900 {
+  border-color: #e2e8f0 !important;
+}
+
+html:not(.dark) .border-zinc-800 {
+  border-color: #e2e8f0 !important;
+}
+
+html:not(.dark) .border-zinc-700 {
+  border-color: #cbd5e1 !important;
+}
+
+html:not(.dark) .border-zinc-600 {
+  border-color: #94a3b8 !important;
+}
+
+html:not(.dark) .border-white\/10 {
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+html:not(.dark) .border-white\/20 {
+  border-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+html:not(.dark) .divide-zinc-800 > * + * {
+  border-color: #e2e8f0 !important;
+}
+
+html:not(.dark) .divide-zinc-700 > * + * {
+  border-color: #cbd5e1 !important;
+}
+
+/* ============================================
+   TEXT COLORS - Light Mode Overrides
+   ============================================ */
+html:not(.dark) .text-white {
+  color: #0f172a !important;
+}
+
+html:not(.dark) .text-zinc-100 {
+  color: #1e293b !important;
+}
+
+html:not(.dark) .text-zinc-200 {
+  color: #334155 !important;
+}
+
+html:not(.dark) .text-zinc-300 {
+  color: #475569 !important;
+}
+
+html:not(.dark) .text-zinc-400 {
+  color: #64748b !important;
+}
+
+html:not(.dark) .text-zinc-500 {
+  color: #64748b !important;
+}
+
+/* ============================================
+   HOVER STATES - Light Mode Overrides
+   ============================================ */
+html:not(.dark) .hover\:bg-zinc-900:hover {
+  background-color: #f1f5f9 !important;
+}
+
+html:not(.dark) .hover\:bg-zinc-800:hover {
+  background-color: #f1f5f9 !important;
+}
+
+html:not(.dark) .hover\:bg-zinc-700:hover {
+  background-color: #e2e8f0 !important;
+}
+
+html:not(.dark) .hover\:bg-zinc-600:hover {
+  background-color: #cbd5e1 !important;
+}
+
+html:not(.dark) .hover\:bg-zinc-800\/50:hover {
+  background-color: rgba(241, 245, 249, 0.5) !important;
+}
+
+html:not(.dark) .hover\:bg-white\/10:hover {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+html:not(.dark) .hover\:text-white:hover {
+  color: #0f172a !important;
+}
+
+/* ============================================
+   INPUT FIELDS - Light Mode
+   ============================================ */
+html:not(.dark) input,
+html:not(.dark) textarea,
+html:not(.dark) select {
   background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
 }
 
-/* Input fields light mode */
-:root:not(.dark) input,
-:root:not(.dark) textarea,
-:root:not(.dark) select {
-  background-color: #ffffff !important;
-  border-color: #d4d4d8 !important;
-  color: #18181b !important;
+html:not(.dark) input::placeholder,
+html:not(.dark) textarea::placeholder {
+  color: #94a3b8 !important;
 }
 
-:root:not(.dark) input::placeholder,
-:root:not(.dark) textarea::placeholder {
-  color: #a1a1aa !important;
+html:not(.dark) input:focus,
+html:not(.dark) textarea:focus,
+html:not(.dark) select:focus {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
 }
 
-/* Cards and panels light mode */
-:root:not(.dark) .rounded-xl {
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+/* ============================================
+   BUTTONS - Light Mode
+   ============================================ */
+html:not(.dark) button {
+  color: #334155;
 }
 
-/* Buttons light mode - keep primary buttons colored */
-:root:not(.dark) button:not(.bg-blue-500):not(.bg-red-500):not(.bg-green-500) {
-  color: #18181b;
+html:not(.dark) button.bg-blue-500,
+html:not(.dark) button.bg-blue-600,
+html:not(.dark) button.bg-primary {
+  color: #ffffff !important;
 }
 
-/* Modal backdrop */
-:root:not(.dark) .fixed.inset-0.bg-black\/50 {
+html:not(.dark) button.bg-red-500,
+html:not(.dark) button.bg-red-600,
+html:not(.dark) button.bg-destructive {
+  color: #ffffff !important;
+}
+
+html:not(.dark) button.bg-green-500,
+html:not(.dark) button.bg-green-600 {
+  color: #ffffff !important;
+}
+
+/* ============================================
+   CARDS & PANELS - Light Mode
+   ============================================ */
+html:not(.dark) .rounded-xl,
+html:not(.dark) .rounded-2xl,
+html:not(.dark) .rounded-lg {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* ============================================
+   MODALS & OVERLAYS - Light Mode
+   ============================================ */
+html:not(.dark) .fixed.inset-0.bg-black\/50,
+html:not(.dark) .fixed.inset-0.bg-black\/80 {
   background-color: rgba(0, 0, 0, 0.3) !important;
+}
+
+html:not(.dark) [class*="bg-zinc-900/95"],
+html:not(.dark) [class*="bg-zinc-800/95"] {
+  background-color: rgba(255, 255, 255, 0.98) !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* ============================================
+   CHAT INTERFACE - Light Mode
+   ============================================ */
+html:not(.dark) .chat-message-assistant {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+/* ============================================
+   SCROLLBAR - Light Mode
+   ============================================ */
+html:not(.dark) ::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+}
+
+html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
+}
+
+/* ============================================
+   RING/FOCUS COLORS - Light Mode
+   ============================================ */
+html:not(.dark) .ring-zinc-700 {
+  --tw-ring-color: #cbd5e1 !important;
+}
+
+html:not(.dark) .ring-zinc-800 {
+  --tw-ring-color: #e2e8f0 !important;
+}
+
+/* ============================================
+   SPECIFIC COMPONENT OVERRIDES
+   ============================================ */
+
+/* New Chat button */
+html:not(.dark) button[class*="bg-blue-500"] {
+  background-color: #3b82f6 !important;
+  color: #ffffff !important;
+}
+
+/* Search input in sidebar */
+html:not(.dark) aside input[type="text"] {
+  background-color: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* User profile section at bottom of sidebar */
+html:not(.dark) [class*="border-t"][class*="border-zinc"] {
+  border-color: #e2e8f0 !important;
+}
+
+/* Settings panel tabs */
+html:not(.dark) [class*="space-y-1"] button {
+  color: #475569;
+}
+
+html:not(.dark) [class*="space-y-1"] button:hover {
+  background-color: #f1f5f9 !important;
+}
+
+html:not(.dark) [class*="space-y-1"] button[class*="bg-zinc-800"] {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* Tool cards in dashboard */
+html:not(.dark) [class*="rounded-xl"][class*="border"][class*="bg-zinc"] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Connector cards */
+html:not(.dark) [class*="p-4"][class*="rounded-xl"][class*="bg-zinc-800"] {
+  background-color: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+/* Integration cards */
+html:not(.dark) [class*="p-4"][class*="rounded-lg"][class*="bg-zinc-800"] {
+  background-color: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+/* Toast notifications - keep them visible */
+html:not(.dark) [data-sonner-toast] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+/* Admin Panel specific */
+html:not(.dark) table {
+  background-color: #ffffff !important;
+}
+
+html:not(.dark) th {
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+  border-color: #e2e8f0 !important;
+}
+
+html:not(.dark) td {
+  border-color: #e2e8f0 !important;
+  color: #334155 !important;
+}
+
+html:not(.dark) tr:hover {
+  background-color: #f8fafc !important;
+}
+
+/* Badge/Tag styling */
+html:not(.dark) [class*="bg-zinc-700"][class*="rounded-full"] {
+  background-color: #e2e8f0 !important;
+  color: #475569 !important;
+}
+
+/* Empty state text */
+html:not(.dark) [class*="text-zinc-500"] {
+  color: #64748b !important;
+}
+
+/* Icons in light mode */
+html:not(.dark) svg {
+  color: inherit;
+}
+
+/* Gradient text should remain visible */
+html:not(.dark) .gradient-text {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #db2777 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Keep primary action buttons colored */
+html:not(.dark) .bg-blue-500 {
+  background-color: #3b82f6 !important;
+}
+
+html:not(.dark) .bg-blue-600 {
+  background-color: #2563eb !important;
+}
+
+html:not(.dark) .text-blue-500 {
+  color: #3b82f6 !important;
+}
+
+html:not(.dark) .text-blue-400 {
+  color: #60a5fa !important;
+}
+
+/* Status indicators should remain colored */
+html:not(.dark) .bg-green-500 {
+  background-color: #22c55e !important;
+}
+
+html:not(.dark) .bg-red-500 {
+  background-color: #ef4444 !important;
+}
+
+html:not(.dark) .bg-yellow-500 {
+  background-color: #eab308 !important;
+}
+
+html:not(.dark) .text-green-500 {
+  color: #22c55e !important;
+}
+
+html:not(.dark) .text-red-500 {
+  color: #ef4444 !important;
+}
+
+html:not(.dark) .text-yellow-500 {
+  color: #eab308 !important;
 }
