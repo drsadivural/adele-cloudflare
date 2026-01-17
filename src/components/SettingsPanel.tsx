@@ -202,6 +202,10 @@ export default function SettingsPanel({
   // Connectors state
   const [connectorsList, setConnectorsList] = useState<Connector[]>([]);
   const [connectorsLoading, setConnectorsLoading] = useState(false);
+  const [showConnectorModal, setShowConnectorModal] = useState(false);
+  const [selectedConnector, setSelectedConnector] = useState<any>(null);
+  const [connectorConfig, setConnectorConfig] = useState<Record<string, string>>({});
+  const [connectingConnector, setConnectingConnector] = useState(false);
   
   // Integrations state
   const [integrationsList, setIntegrationsList] = useState<Integration[]>([]);
@@ -209,6 +213,10 @@ export default function SettingsPanel({
   const [integrationsSearch, setIntegrationsSearch] = useState('');
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [showIntegrationModal, setShowIntegrationModal] = useState(false);
+  const [selectedIntegration, setSelectedIntegration] = useState<any>(null);
+  const [integrationConfig, setIntegrationConfig] = useState<Record<string, string>>({});
+  const [installingIntegration, setInstallingIntegration] = useState(false);
 
   // Load data based on active tab
   useEffect(() => {
@@ -444,14 +452,51 @@ export default function SettingsPanel({
 
   const handleConnectConnector = async (connectorType: string) => {
     try {
-      // In production, this would open OAuth flow
       toast.info(`Connecting to ${connectorType}...`);
       const result = await connectors.getOAuthUrl(connectorType);
-      if (result.url) {
+      
+      if (result.demo && result.connector) {
+        // Demo mode - connector connected without OAuth
+        setConnectorsList(prev => [...prev, result.connector as Connector]);
+        toast.success(result.message || `${connectorType} connected successfully`);
+      } else if (result.authType === 'credentials') {
+        // Show credentials modal
+        setSelectedConnector({ id: connectorType, ...result });
+        setConnectorConfig({});
+        setShowConnectorModal(true);
+      } else if (result.url) {
+        // OAuth flow
         window.open(result.url, '_blank');
       }
     } catch (error: any) {
       toast.error(error.message || 'Failed to connect');
+    }
+  };
+
+  const handleSaveConnectorCredentials = async () => {
+    if (!selectedConnector) return;
+    
+    setConnectingConnector(true);
+    try {
+      const result = await connectors.create({
+        provider: selectedConnector.id,
+        config: connectorConfig,
+        name: selectedConnector.name || selectedConnector.id,
+      });
+      
+      if (result.testResult?.success) {
+        setConnectorsList(prev => [...prev, result.connector]);
+        toast.success(`${selectedConnector.name || selectedConnector.id} connected successfully`);
+        setShowConnectorModal(false);
+        setSelectedConnector(null);
+        setConnectorConfig({});
+      } else {
+        toast.error(result.testResult?.message || 'Connection test failed');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to save credentials');
+    } finally {
+      setConnectingConnector(false);
     }
   };
 
@@ -467,11 +512,41 @@ export default function SettingsPanel({
 
   const handleInstallIntegration = async (integrationId: string) => {
     try {
-      const result = await integrations.install(integrationId);
-      setInstalledIntegrations(prev => [...prev, result.installation]);
-      toast.success('Integration installed');
+      // Get integration details to check if it requires configuration
+      const detailsRes = await integrations.getDetails(integrationId);
+      const integration = detailsRes.integration;
+      
+      if (integration.configFields && integration.configFields.length > 0) {
+        // Show configuration modal
+        setSelectedIntegration(integration);
+        setIntegrationConfig({});
+        setShowIntegrationModal(true);
+      } else {
+        // Install directly without configuration
+        const result = await integrations.install(integrationId, {});
+        setInstalledIntegrations(prev => [...prev, result.installation]);
+        toast.success(`${integration.name} installed successfully`);
+      }
     } catch (error: any) {
       toast.error(error.message || 'Failed to install integration');
+    }
+  };
+
+  const handleSaveIntegrationConfig = async () => {
+    if (!selectedIntegration) return;
+    
+    setInstallingIntegration(true);
+    try {
+      const result = await integrations.install(selectedIntegration.id, integrationConfig);
+      setInstalledIntegrations(prev => [...prev, result.installation]);
+      toast.success(result.message || `${selectedIntegration.name} installed successfully`);
+      setShowIntegrationModal(false);
+      setSelectedIntegration(null);
+      setIntegrationConfig({});
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to install integration');
+    } finally {
+      setInstallingIntegration(false);
     }
   };
 
@@ -1747,6 +1822,129 @@ export default function SettingsPanel({
 
 
     </div>
+
+    {/* Connector Configuration Modal */}
+    {showConnectorModal && selectedConnector && (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60" onClick={() => setShowConnectorModal(false)}>
+        <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Connect {selectedConnector.name || selectedConnector.id}</h3>
+            <button onClick={() => setShowConnectorModal(false)} className="text-zinc-400 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <p className="text-sm text-zinc-400 mb-4">Enter your credentials to connect this service.</p>
+          <div className="space-y-4">
+            {selectedConnector.fields?.map((field: any) => (
+              <div key={field.name}>
+                <label className="block text-sm text-zinc-400 mb-1">
+                  {field.label} {field.required && <span className="text-red-400">*</span>}
+                </label>
+                {field.type === 'select' ? (
+                  <select
+                    value={connectorConfig[field.name] || ''}
+                    onChange={(e) => setConnectorConfig(prev => ({ ...prev, [field.name]: e.target.value }))}
+                    className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500 text-white"
+                  >
+                    <option value="">Select {field.label}</option>
+                    {field.options?.map((opt: string) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={field.type === 'password' ? 'password' : 'text'}
+                    value={connectorConfig[field.name] || ''}
+                    onChange={(e) => setConnectorConfig(prev => ({ ...prev, [field.name]: e.target.value }))}
+                    placeholder={field.placeholder || ''}
+                    className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500 text-white"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-3 pt-6">
+            <button
+              onClick={() => setShowConnectorModal(false)}
+              className="px-4 py-2 bg-zinc-700 rounded-lg hover:bg-zinc-600 transition-colors text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSaveConnectorCredentials}
+              disabled={connectingConnector}
+              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
+            >
+              {connectingConnector ? 'Connecting...' : 'Connect'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Integration Configuration Modal */}
+    {showIntegrationModal && selectedIntegration && (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60" onClick={() => setShowIntegrationModal(false)}>
+        <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Configure {selectedIntegration.name}</h3>
+            <button onClick={() => setShowIntegrationModal(false)} className="text-zinc-400 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <p className="text-sm text-zinc-400 mb-4">{selectedIntegration.description}</p>
+          <div className="space-y-4">
+            {selectedIntegration.configFields?.map((field: any) => (
+              <div key={field.name}>
+                <label className="block text-sm text-zinc-400 mb-1">
+                  {field.label} {field.required && <span className="text-red-400">*</span>}
+                </label>
+                {field.type === 'textarea' ? (
+                  <textarea
+                    value={integrationConfig[field.name] || ''}
+                    onChange={(e) => setIntegrationConfig(prev => ({ ...prev, [field.name]: e.target.value }))}
+                    placeholder={field.placeholder || ''}
+                    rows={4}
+                    className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500 text-white resize-none"
+                  />
+                ) : field.type === 'boolean' ? (
+                  <Toggle
+                    enabled={integrationConfig[field.name] === 'true'}
+                    onChange={(v) => setIntegrationConfig(prev => ({ ...prev, [field.name]: v ? 'true' : 'false' }))}
+                  />
+                ) : (
+                  <input
+                    type={field.type === 'password' ? 'password' : field.type === 'url' ? 'url' : field.type === 'email' ? 'email' : 'text'}
+                    value={integrationConfig[field.name] || ''}
+                    onChange={(e) => setIntegrationConfig(prev => ({ ...prev, [field.name]: e.target.value }))}
+                    placeholder={field.placeholder || ''}
+                    className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-blue-500 text-white"
+                  />
+                )}
+                {field.description && (
+                  <p className="text-xs text-zinc-500 mt-1">{field.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-3 pt-6">
+            <button
+              onClick={() => setShowIntegrationModal(false)}
+              className="px-4 py-2 bg-zinc-700 rounded-lg hover:bg-zinc-600 transition-colors text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSaveIntegrationConfig}
+              disabled={installingIntegration}
+              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
+            >
+              {installingIntegration ? 'Installing...' : 'Install'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* Add Card Modal - rendered outside the main modal container */}
     {showAddCardModal && (

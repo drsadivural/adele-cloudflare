@@ -997,7 +997,7 @@ export const connectors = {
     request<{ connector: Connector }>(`/connectors/${id}`),
 
   create: (data: Partial<Connector>) =>
-    request<{ connector: Connector }>("/connectors", {
+    request<{ connector: Connector; testResult?: { success: boolean; message?: string } }>("/connectors", {
       method: "POST",
       body: JSON.stringify(data),
     }),
@@ -1020,7 +1020,7 @@ export const connectors = {
     request<{ success: boolean }>(`/connectors/${id}/sync`, { method: "POST" }),
 
   getOAuthUrl: (provider: string) =>
-    request<{ url: string }>(`/connectors/oauth/${provider}`),
+    request<{ url?: string; demo?: boolean; connector?: Connector; message?: string; authType?: string; fields?: Array<{ name: string; label: string; type: string; required?: boolean; placeholder?: string; options?: string[] }>; name?: string }>(`/connectors/oauth/${provider}`),
 
   connect: (id: number | string, code?: string | Record<string, string>) =>
     request<{ success: boolean }>(`/connectors/${id}/connect`, {
@@ -1051,8 +1051,11 @@ export const integrations = {
   getInstalled: () =>
     request<{ integrations: InstalledIntegration[] }>("/integrations/installed"),
 
+  getDetails: (integrationId: string) =>
+    request<{ integration: Integration & { configFields?: Array<{ name: string; label: string; type: string; required?: boolean; placeholder?: string; description?: string }> } }>(`/integrations/${integrationId}`),
+
   install: (integrationId: string, config?: object) =>
-    request<{ installation: InstalledIntegration }>("/integrations/install", {
+    request<{ installation: InstalledIntegration; message?: string }>("/integrations/install", {
       method: "POST",
       body: JSON.stringify({ integrationId, config }),
     }),
